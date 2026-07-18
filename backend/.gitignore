@@ -1,0 +1,9 @@
+# backend/.gitignore
+.env
+jarvis_users.db
+jarvis_users.db-shm
+jarvis_users.db-wal
+__pycache__/
+*.pyc
+*.pyo
+

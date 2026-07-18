@@ -1,0 +1,41 @@
+# JARVIS Core Requirements (UTF-8, Python 3.13 compatible)
+# Install with: pip install -r requirements.txt
+
+# ── Azure OpenAI / HTTP ─────────────────────────────────────────────────────
+openai>=1.75.0
+python-dotenv>=1.1.0
+requests>=2.32.0
+httpx>=0.28.0
+
+# ── Vector Memory (ChromaDB) ────────────────────────────────────────────────
+chromadb>=0.6.0
+
+# ── Whisper (local STT for audio transcription) ─────────────────────────────
+# Used by both console mode and API mode (for uploaded audio files)
+openai-whisper>=20240930
+
+# ── Console mode audio I/O (microphone recording) ───────────────────────────
+# NOT needed for API/server mode — installed anyway for full console support
+sounddevice>=0.5.0
+scipy>=1.15.0
+numpy>=2.0.0
+
+# ── Console mode TTS (Azure + audio playback) ────────────────────────────────
+# NOT needed for API/server mode (SilentSpeechEngine is used instead)
+pygame>=2.6.0
+
+# ── NLP / Tokenization ──────────────────────────────────────────────────────
+tiktoken>=0.9.0
+
+# ── FastAPI backend dependencies ─────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.35.0
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.21.0
+alembic>=1.15.0
+python-jose[cryptography]>=3.4.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.20
+pydantic[email]>=2.11.0
+pydantic-settings>=2.9.0
+bcrypt>=4.3.0

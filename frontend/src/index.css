@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-main: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-surface-hover: #f1f5f9;
+    --text-main: #0f172a;
+    --text-muted: #64748b;
+    --border-muted: #e2e8f0;
+  }
+
+  .dark {
+    --bg-main: #0B0F19;
+    --bg-surface: #151C2C;
+    --bg-surface-hover: #1E293B;
+    --text-main: #F3F4F6;
+    --text-muted: #9CA3AF;
+    --border-muted: #334155;
+  }
+
+  html, body {
+    @apply m-0 p-0 text-textMain bg-background font-sans min-h-screen antialiased selection:bg-primary selection:text-white transition-colors duration-300;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply backdrop-blur-lg border border-borderMuted shadow-lg transition-colors duration-300;
+    background-color: rgba(255, 255, 255, 0.7);
+  }
+  .dark .glass {
+    background-color: rgba(21, 28, 44, 0.8);
+  }
+  .gradient-text {
+    @apply text-transparent bg-clip-text bg-gradient-to-r from-primary to-purple-500;
+  }
+}

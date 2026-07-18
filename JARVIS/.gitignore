@@ -1,0 +1,40 @@
+# Python cache and environment
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.env
+
+# Audio and speech files
+cache/
+
+# Database and vector store files
+vector_store/
+*.sqlite3
+
+# Memory and config files
+memory.json
+
+# Ignore IDE/editor files
+*.swp
+*.swo
+*.bak
+
+# Do not ignore source code and README
+!main.py
+!README.md
+
+# Ignore everything in audio, memory, nlp, speech, vision except source code
+audio/__pycache__/
+audio/*.pyc
+memory/__pycache__/
+memory/*.pyc
+nlp/__pycache__/
+nlp/*.pyc
+speech/__pycache__/
+speech/*.pyc
+
+# Ignore specific files in vector_store
+vector_store/0bb352f1-9b10-41a3-b4d9-9f90fe38de53
+vector_store/chroma.sqlite3

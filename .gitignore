@@ -1,0 +1,6 @@
+*.pptx
+*.md
+*db
+*.json
+*ps1
+node_modules/
