@@ -16,7 +16,7 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
-        if v.isdigits() if hasattr(v, "isdigits") else v.isdecimal():
+        if v.isdigit():
             raise ValueError("Password must not be all digits")
         return v
 

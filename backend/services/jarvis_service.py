@@ -129,6 +129,67 @@ class JARVISService:
         )
         return response, emotion
 
+    async def chat_stream(self, text: str):
+        """
+        Async generator that yields SSE-formatted token chunks.
+        Uses the GPTResponder's streaming method for real-time token delivery.
+        """
+        if not self._initialized:
+            raise RuntimeError("JARVISService not initialized. Call initialize() first.")
+
+        loop = asyncio.get_running_loop()
+
+        # Parse intents in thread pool
+        intents, data = await loop.run_in_executor(
+            _executor,
+            lambda: self._get_intents_and_data(text),
+        )
+
+        # Get semantic context
+        sem_context = await loop.run_in_executor(
+            _executor,
+            lambda: self._brain._retrieve_context(data),
+        )
+
+        # Stream tokens from GPTResponder using a thread-safe queue
+        import queue
+        token_queue: queue.Queue = queue.Queue()
+        _SENTINEL = object()
+
+        def _produce_tokens():
+            """Run in thread: push tokens into the queue."""
+            try:
+                for token in self._brain.gpt.generate_response_stream(data, sem_context):
+                    token_queue.put(token)
+            except Exception as e:
+                token_queue.put(f"[Stream error: {e}]")
+            finally:
+                token_queue.put(_SENTINEL)
+
+        # Start producer in thread pool
+        loop.run_in_executor(_executor, _produce_tokens)
+
+        # Yield tokens as SSE events
+        full_response = []
+        while True:
+            try:
+                token = await loop.run_in_executor(None, lambda: token_queue.get(timeout=30))
+            except Exception:
+                break
+            if token is _SENTINEL:
+                break
+            full_response.append(token)
+            yield token
+
+        # Store the full response in memory (fire-and-forget in thread)
+        joined = "".join(full_response)
+        await loop.run_in_executor(
+            _executor,
+            lambda: self._brain._store_turns(
+                user_text=data, assistant_text=joined, intent="unknown", emotion="neutral"
+            ),
+        )
+
     def _get_intents_and_data(self, text: str):
         """(Blocking) parse intents from text."""
         # Access nlp via brain reference — avoids re-importing
@@ -137,3 +198,4 @@ class JARVISService:
 
 # Module-level singleton instance — import this everywhere
 jarvis_service = JARVISService()
+

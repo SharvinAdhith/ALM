@@ -411,3 +411,181 @@ async def get_welcome(
 
     return {"message": message, "is_new": is_new, "user_name": first_name}
 
+
+# ── SSE Streaming chat ──────────────────────────────────────────────────────
+
+from fastapi.responses import StreamingResponse
+
+
+@router.post(
+    "/stream",
+    summary="Stream a text response from JARVIS via Server-Sent Events",
+)
+async def chat_stream(
+    payload: ChatTextRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    SSE streaming endpoint — sends JARVIS's response token-by-token.
+    Each token is sent as a Server-Sent Event (SSE) in the format:
+        data: <token>\n\n
+    The stream ends with:
+        data: [DONE]\n\n
+    """
+    logger.info("Stream chat | user=%d | text=%.80r", user.id, payload.text)
+
+    # Resolve or create session (runs while DI db session is still alive)
+    session = await _get_or_create_session(
+        payload.session_id, user, db, first_message=payload.text
+    )
+
+    # Store user message (runs while DI db session is still alive)
+    await _append_message(db, session.id, role="user", content=payload.text)
+
+    # Capture IDs before the DI session closes
+    session_id = session.id
+
+    async def event_generator():
+        full_response = []
+        try:
+            async for token in jarvis_service.chat_stream(payload.text):
+                full_response.append(token)
+                # SSE format: data: <content>\n\n
+                yield f"data: {token}\n\n"
+        except Exception as exc:
+            logger.exception("Stream error: %s", exc)
+            yield f"data: [ERROR]\n\n"
+
+        # Signal end of stream
+        yield f"data: [DONE]\n\n"
+
+        # ── Save JARVIS response using a FRESH db session ──────────────
+        # The DI-injected `db` session is already committed/closed by now
+        # (FastAPI closes dependencies when the handler returns StreamingResponse).
+        # So we create an independent session for this write.
+        joined = "".join(full_response)
+        if joined:
+            from backend.core.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as save_db:
+                try:
+                    save_msg = ChatMessage(
+                        session_id=session_id,
+                        role="jarvis",
+                        content=joined,
+                        emotion="neutral",
+                    )
+                    save_db.add(save_msg)
+                    await save_db.commit()
+                except Exception as exc:
+                    logger.exception("Failed to save streamed response: %s", exc)
+                    await save_db.rollback()
+
+        # Send session_id as final metadata event
+        yield f"event: meta\ndata: {session_id}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── Analytics ────────────────────────────────────────────────────────────────
+
+@router.get(
+    "/analytics",
+    summary="Get chat analytics for the authenticated user",
+)
+async def get_analytics(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """
+    Returns aggregated chat statistics for the current user:
+    - Total sessions, messages, avg message length
+    - Message breakdown by role (user vs jarvis)
+    - Emotion distribution from JARVIS responses
+    - Recent activity timeline
+    """
+    from sqlalchemy import case, cast, Float
+
+    # Total sessions
+    sess_count_result = await db.execute(
+        select(func.count(ChatSession.id)).where(ChatSession.user_id == user.id)
+    )
+    total_sessions = sess_count_result.scalar() or 0
+
+    # Total messages across all user sessions
+    msg_count_result = await db.execute(
+        select(func.count(ChatMessage.id))
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(ChatSession.user_id == user.id)
+    )
+    total_messages = msg_count_result.scalar() or 0
+
+    # Messages by role
+    role_counts_result = await db.execute(
+        select(ChatMessage.role, func.count(ChatMessage.id))
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(ChatSession.user_id == user.id)
+        .group_by(ChatMessage.role)
+    )
+    role_breakdown = {role: count for role, count in role_counts_result.all()}
+
+    # Average message length (JARVIS responses)
+    avg_len_result = await db.execute(
+        select(func.avg(func.length(ChatMessage.content)))
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(ChatSession.user_id == user.id, ChatMessage.role == "jarvis")
+    )
+    avg_response_length = round(avg_len_result.scalar() or 0, 1)
+
+    # Emotion distribution
+    emotion_result = await db.execute(
+        select(ChatMessage.emotion, func.count(ChatMessage.id))
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(
+            ChatSession.user_id == user.id,
+            ChatMessage.role == "jarvis",
+            ChatMessage.emotion.isnot(None),
+        )
+        .group_by(ChatMessage.emotion)
+    )
+    emotion_distribution = {
+        emotion: count for emotion, count in emotion_result.all() if emotion
+    }
+
+    # Recent 7 sessions with message counts
+    recent_result = await db.execute(
+        select(
+            ChatSession.title,
+            ChatSession.created_at,
+            func.count(ChatMessage.id).label("msg_count"),
+        )
+        .outerjoin(ChatMessage, ChatMessage.session_id == ChatSession.id)
+        .where(ChatSession.user_id == user.id)
+        .group_by(ChatSession.id)
+        .order_by(ChatSession.created_at.desc())
+        .limit(7)
+    )
+    recent_sessions = [
+        {"title": title, "created_at": str(created_at), "messages": msg_count}
+        for title, created_at, msg_count in recent_result.all()
+    ]
+
+    return {
+        "total_sessions": total_sessions,
+        "total_messages": total_messages,
+        "user_messages": role_breakdown.get("user", 0),
+        "jarvis_messages": role_breakdown.get("jarvis", 0),
+        "avg_response_length": avg_response_length,
+        "emotion_distribution": emotion_distribution,
+        "recent_sessions": recent_sessions,
+    }
+
+

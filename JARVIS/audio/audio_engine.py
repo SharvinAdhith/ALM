@@ -52,7 +52,7 @@ def transcribe_audio(filename: str = "cache/input.wav") -> str:
     model = whisper.load_model("base")
     result = model.transcribe(filename, language="en")
     text: str = result["text"]
-    print("🗣️ Transcribed:", text)
+    print("Transcribed:", text)
     return text
 
 

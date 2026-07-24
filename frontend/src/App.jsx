@@ -62,6 +62,7 @@ function App() {
           <Route path="/chat" element={<ChatLayout />}>
             <Route index element={<Chat />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="pricing" element={<Pricing />} />
           </Route>
           <Route path="/settings" element={<ChatLayout />}>
             <Route index element={<Settings />} />
@@ -69,6 +70,7 @@ function App() {
         </Route>
 
         <Route path="/pricing" element={<Pricing />} />
+
       </Routes>
     </Router>
   );

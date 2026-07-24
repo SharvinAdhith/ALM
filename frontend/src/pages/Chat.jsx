@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Send, Mic, Square, Loader2, Bot, Volume2 } from 'lucide-react';
+import { Send, Mic, Square, Loader2, Bot, Volume2, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import AudioWaveform from '../components/AudioWaveform';
 
 const API = 'http://localhost:8000';
 const SILENCE_THRESHOLD = 15;   // RMS amplitude 0-255
@@ -14,9 +15,11 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [silenceCountdown, setSilenceCountdown] = useState(null);
+  const [activeStream, setActiveStream] = useState(null); // MediaStream for waveform
 
   const mediaRecorderRef  = useRef(null);
   const audioChunksRef    = useRef([]);
@@ -29,7 +32,7 @@ export default function Chat() {
   const navigate         = useNavigate();
 
   // ── Scroll ────────────────────────────────────────────────────────────────
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isTyping]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isTyping, isStreaming]);
 
   // ── TTS ───────────────────────────────────────────────────────────────────
   const synthesizeSpeech = useCallback((text) => {
@@ -80,18 +83,21 @@ export default function Chat() {
       const msgs = await res.json();
       if (!msgs.length) { await fetchWelcome(); return; }
       setMessages(msgs.map(m => ({
-        id: m.id, role: m.role, content: m.content,
-        emotion: m.emotion, transcription: m.transcription,
+        id: m.id,
+        // Normalize role: some older records may use 'assistant'
+        role: m.role === 'assistant' ? 'jarvis' : m.role,
+        content: m.content,
+        emotion: m.emotion,
+        transcription: m.transcription,
       })));
     } catch { await fetchWelcome(); }
   }, [token, fetchWelcome]);
 
-  // ── Session init — reacts to URL changes ─────────────────────────────────
-  // URL scheme:
-  //   /chat           → restore session from sessionStorage (or welcome)
-  //   /chat?new=1     → new chat (clear session, show welcome)
-  //   /chat?session=N → load specific session N
+  // ── Session init — reacts to URL changes + token availability ────────────
   useEffect(() => {
+    // Guard: don't run until auth token is available (avoids race on reload)
+    if (!token) return;
+
     const params = new URLSearchParams(location.search);
     const isNew       = params.get('new') === '1';
     const sessionParam = params.get('session');
@@ -125,35 +131,113 @@ export default function Chat() {
       fetchWelcome();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search]);
+  }, [location.search, token]);
 
-  // ── Text chat ─────────────────────────────────────────────────────────────
+  // ── SSE Streaming text chat ───────────────────────────────────────────────
   const handleTextSend = async (e) => {
     e.preventDefault();
     const text = inputValue.trim();
-    if (!text || isTyping) return;
+    if (!text || isTyping || isStreaming) return;
 
     setInputValue('');
     const userMsg = { id: Date.now(), role: 'user', content: text };
     const updated = [...messages, userMsg];
     setMessages(updated);
-    setIsTyping(true);
+
+    // Create a placeholder JARVIS message for streaming
+    const jarvisMsgId = Date.now() + 1;
+    const jarvisMsg = { id: jarvisMsgId, role: 'jarvis', content: '', streaming: true };
+    setMessages([...updated, jarvisMsg]);
+    setIsStreaming(true);
 
     try {
-      const res = await fetch(`${API}/api/v1/jarvis/text`, {
+      const res = await fetch(`${API}/api/v1/jarvis/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ text, session_id: currentSessionRef.current }),
       });
-      const data = await res.json();
-      if (data.session_id) persistSession(data.session_id);
-      const jarvisMsg = { id: Date.now() + 1, role: 'jarvis', content: data.response, emotion: data.emotion };
-      setMessages([...updated, jarvisMsg]);
-      synthesizeSpeech(data.response);
-    } catch {
-      setMessages([...updated, { id: Date.now() + 1, role: 'jarvis', content: 'Connection error. Is the backend running?' }]);
+
+      if (!res.ok) {
+        // Fallback to non-streaming endpoint
+        const fallbackRes = await fetch(`${API}/api/v1/jarvis/text`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ text, session_id: currentSessionRef.current }),
+        });
+        const data = await fallbackRes.json();
+        if (data.session_id) persistSession(data.session_id);
+        setMessages(prev => prev.map(m =>
+          m.id === jarvisMsgId ? { ...m, content: data.response, emotion: data.emotion, streaming: false } : m
+        ));
+        synthesizeSpeech(data.response);
+        setIsStreaming(false);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        // First pass: detect meta event lines so we can skip their data lines
+        const metaDataLines = new Set();
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].startsWith('event: meta') && lines[i + 1]?.startsWith('data: ')) {
+            metaDataLines.add(i + 1);
+            // Parse session_id here
+            const sid = Number(lines[i + 1].slice(6));
+            if (sid) persistSession(sid);
+          }
+        }
+
+        // Second pass: process only non-meta data lines
+        for (let i = 0; i < lines.length; i++) {
+          if (metaDataLines.has(i)) continue; // skip — this is the session_id line
+
+          const line = lines[i];
+          if (!line.startsWith('data: ')) continue;
+
+          const payload = line.slice(6);
+
+          if (payload === '[DONE]') {
+            setMessages(prev => prev.map(m =>
+              m.id === jarvisMsgId ? { ...m, streaming: false } : m
+            ));
+            synthesizeSpeech(accumulated);
+            continue;
+          }
+
+          if (payload === '[ERROR]') {
+            setMessages(prev => prev.map(m =>
+              m.id === jarvisMsgId ? { ...m, content: 'An error occurred while generating the response.', streaming: false } : m
+            ));
+            continue;
+          }
+
+          // Accumulate actual response token
+          accumulated += payload;
+          const current = accumulated;
+          setMessages(prev => prev.map(m =>
+            m.id === jarvisMsgId ? { ...m, content: current } : m
+          ));
+        }
+      }
+    } catch (err) {
+      console.error('Stream error:', err);
+      setMessages(prev => prev.map(m =>
+        m.id === jarvisMsgId ? { ...m, content: 'Connection error. Is the backend running?', streaming: false } : m
+      ));
     } finally {
-      setIsTyping(false);
+      setIsStreaming(false);
     }
   };
 
@@ -181,6 +265,7 @@ export default function Chat() {
           if (mediaRecorderRef.current?.state === 'recording') {
             mediaRecorderRef.current.stop();
             setIsRecording(false);
+            setActiveStream(null);
           }
           return; // stop animation loop
         }
@@ -199,11 +284,13 @@ export default function Chat() {
     setSilenceCountdown(null);
     if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
     setIsRecording(false);
+    setActiveStream(null);
   };
 
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setActiveStream(stream); // Pass to AudioWaveform
       const recorder = new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
@@ -213,13 +300,18 @@ export default function Chat() {
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         setSilenceCountdown(null);
+        setActiveStream(null);
         if (!audioChunksRef.current.length) return;
 
         const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         const tempId = Date.now();
-        const pending = [...messages, { id: tempId, role: 'user', content: '🎙️ Processing audio…' }];
-        setMessages(pending);
-        setIsTyping(true);
+        const processingMsgId = Date.now() + 1;
+        // Show the user's recording as a microphone message
+        const userAudioMsg = { id: tempId, role: 'user', content: '🎙️ Voice message' };
+        // Show a circular-spinner processing bubble for JARVIS
+        const processingMsg = { id: processingMsgId, role: 'jarvis', content: '', processing: true };
+        const pendingBase = [...messages, userAudioMsg];
+        setMessages([...pendingBase, processingMsg]);
 
         const form = new FormData();
         form.append('file', blob, 'record.webm');
@@ -233,15 +325,16 @@ export default function Chat() {
           });
           const data = await res.json();
           if (data.session_id) persistSession(data.session_id);
-          const finalized = pending.map(m =>
-            m.id === tempId ? { ...m, content: `🎙️ "${data.transcription}"` } : m
+          // Replace user placeholder with transcription, replace spinner with response
+          setMessages(prev => prev
+            .map(m => m.id === tempId ? { ...m, content: `🎙️ "${data.transcription}"` } : m)
+            .map(m => m.id === processingMsgId ? { ...m, content: data.response, emotion: data.emotion, processing: false } : m)
           );
-          setMessages([...finalized, { id: Date.now(), role: 'jarvis', content: data.response, emotion: data.emotion }]);
           synthesizeSpeech(data.response);
         } catch {
-          setMessages([...pending, { id: Date.now(), role: 'jarvis', content: 'Audio pipeline error.' }]);
-        } finally {
-          setIsTyping(false);
+          setMessages(prev => prev.map(m =>
+            m.id === processingMsgId ? { ...m, content: 'Audio pipeline error.', processing: false } : m
+          ));
         }
       };
 
@@ -267,20 +360,36 @@ export default function Chat() {
       <div className="flex-1 overflow-y-auto p-4">
         <div className="max-w-3xl mx-auto w-full space-y-6 pb-4">
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
               {msg.role === 'jarvis' && (
-                <div className="w-9 h-9 rounded-full bg-surface border border-borderMuted flex items-center justify-center shrink-0 mt-1">
-                  <Bot className="w-5 h-5 text-primary" />
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/20 flex items-center justify-center shrink-0 mt-1">
+                  {msg.processing
+                    ? <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+                    : <Bot className="w-5 h-5 text-indigo-400" />}
                 </div>
               )}
               <div className={`flex flex-col gap-1.5 max-w-[82%] ${msg.role === 'user' ? 'items-end' : ''}`}>
                 <div className={`px-4 py-3 rounded-2xl text-[15px] leading-relaxed
                   ${msg.role === 'user'
-                    ? 'bg-primary text-white rounded-br-sm'
+                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-br-sm shadow-lg shadow-indigo-500/10'
                     : 'bg-surface text-textMain border border-borderMuted rounded-bl-sm shadow-sm'
                   }`}
                 >
-                  {msg.content}
+                  {/* Audio processing spinner bubble */}
+                  {msg.processing ? (
+                    <div className="flex items-center gap-3">
+                      <div className="relative w-5 h-5 shrink-0">
+                        <div className="absolute inset-0 rounded-full border-2 border-indigo-500/20" />
+                        <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-indigo-400 animate-spin" />
+                      </div>
+                      <span className="text-textMuted text-sm">Processing your audio…</span>
+                    </div>
+                  ) : (
+                    <>
+                      {msg.content}
+                      {msg.streaming && <span className="typing-cursor" />}
+                    </>
+                  )}
                 </div>
                 {msg.emotion && msg.emotion !== 'neutral' && msg.emotion !== 'error' && msg.role === 'jarvis' && (
                   <span className="text-xs text-textMuted px-1 flex items-center gap-1">
@@ -289,7 +398,7 @@ export default function Chat() {
                 )}
               </div>
               {msg.role === 'user' && (
-                <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-purple-500 flex items-center justify-center shrink-0 text-white font-bold text-xs mt-1">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center shrink-0 text-white font-bold text-xs mt-1 shadow-lg shadow-indigo-500/20">
                   {initials}
                 </div>
               )}
@@ -298,13 +407,16 @@ export default function Chat() {
 
           {isTyping && (
             <div className="flex gap-3">
-              <div className="w-9 h-9 rounded-full bg-surface border border-borderMuted flex items-center justify-center shrink-0">
-                <Loader2 className="w-4 h-4 text-primary animate-spin" />
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/20 flex items-center justify-center shrink-0">
+                <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
               </div>
-              <div className="px-4 py-3 rounded-2xl bg-surface border border-borderMuted flex items-center gap-1.5">
-                {[0, 150, 300].map(d => (
-                  <div key={d} className="w-2 h-2 rounded-full bg-textMuted animate-bounce" style={{ animationDelay: `${d}ms` }} />
-                ))}
+              <div className="px-5 py-3.5 rounded-2xl bg-surface border border-borderMuted flex items-center gap-3 shadow-sm">
+                {/* Circular spinner */}
+                <div className="relative w-5 h-5 shrink-0">
+                  <div className="absolute inset-0 rounded-full border-2 border-indigo-500/20" />
+                  <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-indigo-400 animate-spin" />
+                </div>
+                <span className="text-sm text-textMuted">JARVIS is thinking…</span>
               </div>
             </div>
           )}
@@ -315,20 +427,23 @@ export default function Chat() {
       {/* Input */}
       <div className="p-4 bg-background border-t border-borderMuted">
         <div className="max-w-3xl mx-auto">
+          {/* Audio Waveform Visualization */}
+          <AudioWaveform stream={activeStream} isActive={isRecording} />
+
           {isRecording && silenceCountdown !== null && (
             <p className="text-center text-xs text-textMuted mb-2 animate-pulse">
               🔇 Silence detected — auto-stopping in {silenceCountdown}s
             </p>
           )}
-          <div className="glass rounded-2xl p-1.5 focus-within:ring-2 focus-within:ring-primary/50 transition-all flex items-end gap-1">
+          <div className="glass-strong rounded-2xl p-1.5 focus-within:glow-border transition-all flex items-end gap-1">
             <button
               type="button"
               onClick={toggleRecording}
               title={isRecording ? 'Stop recording' : 'Start voice input'}
               className={`p-3 rounded-xl shrink-0 transition-all
                 ${isRecording
-                  ? 'bg-red-500 text-white animate-pulse'
-                  : 'text-textMuted hover:bg-surfaceHover hover:text-primary'
+                  ? 'bg-red-500 text-white recording-pulse'
+                  : 'text-textMuted hover:bg-surfaceHover hover:text-indigo-400'
                 }`}
             >
               {isRecording ? <Square size={19} /> : <Mic size={19} />}
@@ -344,15 +459,15 @@ export default function Chat() {
               />
               <button
                 type="submit"
-                disabled={!inputValue.trim() || isRecording || isTyping}
-                className="p-2.5 bg-primary text-white rounded-xl hover:bg-primaryDark disabled:opacity-40 transition-colors shrink-0 mr-1"
+                disabled={!inputValue.trim() || isRecording || isTyping || isStreaming}
+                className="p-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl hover:from-indigo-600 hover:to-purple-700 disabled:opacity-40 transition-all shrink-0 mr-1 shadow-lg shadow-indigo-500/20 disabled:shadow-none"
               >
-                <Send size={17} />
+                {isStreaming ? <Sparkles size={17} className="animate-pulse" /> : <Send size={17} />}
               </button>
             </form>
           </div>
-          <p className="text-center text-xs text-textMuted mt-2.5 opacity-60">
-            JARVIS may make mistakes. Verify important information.
+          <p className="text-center text-xs text-textMuted mt-2.5 opacity-50">
+            JARVIS ALM — Deep Learning Audio Language Model · Streaming enabled
           </p>
         </div>
       </div>
