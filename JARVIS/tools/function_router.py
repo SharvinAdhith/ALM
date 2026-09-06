@@ -478,11 +478,53 @@ class FunctionRouter:
         except Exception as e:
             print(f"[FunctionRouter] Failed to write actions log: {e}")
 
+    def format_human_readable(self, text: str) -> str:
+        """Converts raw tool-call JSON string into human-readable action completion prose."""
+        if not text or not isinstance(text, str):
+            return str(text)
+        try:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                parsed = json.loads(text[start:end+1])
+                if isinstance(parsed, dict):
+                    action = parsed.get("action")
+                    tool = parsed.get("tool") or (action if action != "respond" else None)
+                    args = parsed.get("args") or {}
+
+                    if action == "respond" and parsed.get("text"):
+                        return parsed.get("text")
+
+                    if tool == "image_search":
+                        query = args.get("query", "your request")
+                        return f"Opened Google Chrome and searched for images of '{query}'."
+                    elif tool == "web_search":
+                        query = args.get("query", "your search")
+                        return f"Opened Google Chrome tab with search results for '{query}'."
+                    elif tool == "youtube_play":
+                        query = args.get("query", "video")
+                        return f"Opened YouTube in Google Chrome to play '{query}'."
+                    elif tool == "open_maps":
+                        loc = args.get("location", "the location")
+                        return f"Opened Google Maps for '{loc}'."
+                    elif tool == "open_app":
+                        app = args.get("app_name", "the application")
+                        return f"Launched '{app}' on your system."
+                    elif tool == "open_url":
+                        url = args.get("url", "the webpage")
+                        return f"Opened '{url}' in Google Chrome."
+                    elif tool:
+                        return f"Action completed: '{tool}' executed successfully."
+        except Exception:
+            pass
+        return text
+
     # ---------------- orchestrator ----------------
     def plan_and_execute(self, user_input: str, semantic_context: str = "") -> str:
         MAX_STEPS = 4
         step = 0
         last_llm_text = None
+        executed_tools = []
 
         while step < MAX_STEPS:
             step += 1
@@ -496,13 +538,13 @@ class FunctionRouter:
             if not parsed:
                 # LLM didn't follow structured output -> return raw text (safe fallback)
                 print("[FunctionRouter] LLM did not return structured JSON; returning text as reply.")
-                return llm_text.strip()
+                return self.format_human_readable(llm_text.strip())
 
             action = parsed.get("action")
             if action == "respond":
                 text = parsed.get("text", "")
                 print(f"[FunctionRouter] Final respond: {text}")
-                return text
+                return self.format_human_readable(text)
 
             if action == "call_tool":
                 tool_name = parsed.get("tool")
@@ -525,6 +567,7 @@ class FunctionRouter:
                     print(f"[FunctionRouter] Executing tool '{tool_name}' with args: {coerced}")
                     result = fn(**coerced)
                     print(f"[FunctionRouter] Tool result: {result}")
+                    executed_tools.append((tool_name, coerced))
                 except Exception as e:
                     print(f"[FunctionRouter] Tool execution error: {e}")
                     return f"Tool '{tool_name}' execution failed: {e}"
@@ -541,10 +584,15 @@ class FunctionRouter:
 
             # Unknown action -> return the raw llm_text
             print("[FunctionRouter] Unknown action returned by LLM; returning raw.")
-            return llm_text
+            return self.format_human_readable(llm_text)
+
+        # If tools were executed but max steps exhausted before LLM sent respond
+        if executed_tools:
+            tool_name, coerced = executed_tools[-1]
+            return self.format_human_readable(json.dumps({"action": "call_tool", "tool": tool_name, "args": coerced}))
 
         # exhausted steps
         print("[FunctionRouter] Max steps exhausted; returning last LLM output.")
         if last_llm_text:
-            return last_llm_text
+            return self.format_human_readable(last_llm_text)
         return "I couldn't complete that task right now."

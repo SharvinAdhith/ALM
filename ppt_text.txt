@@ -1,0 +1,250 @@
+Department of Computer Science and Engineering
+Supervisor: Dr. V. Vijeyakaveri
+Batch Members:
+Sharvin Adhith V K  727723EUCS222
+Surendhiran M          727723EUCS249
+Vijay Syam B K         727723EUCS276
+Batch No.: II
+Date: 20/07/2026 (AN)
+DEEP LEARNING BASED AUDIO LANGUAGE MODEL
+Project Work Phase – I 
+First Review
+Problem Statement(s)
+Define the Problem: 
+Existing AI systems process speech and non-speech audio in isolation - no single model unifies both.
+Current systems lack contextual audio reasoning - they cannot infer real-world situations from combined sound and speech signals.
+ Emotion is detected from text only, not from actual voice tone - missing a critical human communication channel (paralinguistics).
+There is no unified model that understands both what is said and what is happening in the background.
+
+Context and Background: 
+In the 6th semester, we built JARVIS - a voice assistant that listens and responds. 
+However, it only understood spoken words (speech). It could not detect background sounds like rain, engines, or crowd noise. 
+Research models like SALMONN and Qwen-Audio explore joint audio understanding, but remain research-only demos with no deployable full-stack implementation. 
+The voice AI market ($30B+) is rapidly growing, yet no commercial assistant - Alexa, Siri, or Google - supports non-speech audio understanding alongside reasoning.
+In 7th semester, we upgrade it to understand the full audio scene.
+
+20-07-2026
+2
+Impact of the Problem: 
+Smart assistants (Alexa, Siri, Google) understand only what you say - not the environment around you. 
+This limits their usefulness in real-world noisy situations like hospitals, airports, classrooms, and public spaces.
+Deaf individuals and accessibility tools are especially affected.
+Hearing-impaired individuals cannot rely on AI tools to describe their surrounding audio environment, limiting independence and accessibility.
+Safety-critical systems (hospitals, surveillance, defense) that need simultaneous speech + event detection have no unified AI solution to rely on.
+Mental health and empathetic AI applications fail without voice emotion detection — responding to the words but missing the true emotional state of the speaker.
+
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Objective(s)
+Primary Objective: 
+Upgrade JARVIS to become a true Audio Language Model (ALM 2.0) that simultaneously understands spoken words AND background sounds, detects emotions from voice tone, and answers complex questions about complete audio scenes.
+
+20-07-2026
+3
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Measurable Outcomes:
+
+Audio event classification accuracy above 85%. 
+Voice emotion detection accuracy above 75%. 
+End-to-end audio response time under 6 seconds.
+Working live demo of airport scene understanding by December 2026.
+Secondary Objectives:       
+                                                                
+Add a non-speech audio classifier (PANNs/BEATs) to detect 527 types of sounds.
+Add voice emotion detection using Wav2Vec 2.0.
+Build a real-time streaming response system.
+Upgrade the UI with waveform display, emotion badges, and audio event tags.
+Implement WebSocket-based live chat.
+Sustainable Development Goals - Mapping
+SDG 4
+SDG 9
+SDG 10
+20-07-2026
+4
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Literature Survey - Introduction
+Domain Overview:
+Audio Language Models (ALMs) are deep-learning systems that jointly process speech, non-speech sound events and natural language so that a single model can transcribe, classify and reason about an audio scene.
+They combine self-supervised audio encoders (e.g., Whisper, BEATs, CLAP) with Large Language Models (LLMs) through adapters, Q-Formers or LoRA fine-tuning.
+Recent IEEE ICASSP/TASLP work (2024-2026) has pushed ALMs from narrow ASR/classification tools toward multi-task audio captioning, reasoning, emotion-aware and instruction-following systems.
+This survey grounds the JARVIS ALM 2.0 project - which unifies speech transcription, non-speech sound classification and voice-emotion detection.
+20-07-2026
+5
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Survey Scope:
+15 peer-reviewed IEEE papers were reviewed, drawn from IEEE ICASSP (2024-2026) and IEEE/ACM Transactions on Audio, Speech and Language Processing.
+Selection criteria: (1) published by IEEE, (2) directly related to audio-language modelling, audio captioning, speech emotion recognition or audio-text representation learning, (3) 2023-2026 publication window, weighted toward 2024-2026.
+Papers are grouped into: audio-text representation learning, LLM-based audio captioning/reasoning, speech-emotion & paralinguistic modelling, and benchmarking/evaluation of audio-LLMs.
+The following slides summarise methodology, then compare advantages/limitations and identify the research gap.
+Literature Survey - Reviewed Papers (1-8)
+1. Elizalde et al., CLAP: Learning Audio Concepts from Natural Language Supervision, IEEE ICASSP 2023 - contrastive audio-text embedding using dual encoders.
+2. Santoso et al., LLM-Based Emotional Speech Annotation Using Context and Acoustic Feature for SER, IEEE ICASSP 2024 - LLM prompted with transcripts + acoustic descriptors to auto-label emotion.
+3. Tang et al., Extending Large Language Models for Speech and Audio Captioning, IEEE ICASSP 2024 - connects an audio encoder to an LLM decoder for unified captioning.
+4. Kim et al., EnCLAP: Combining Neural Audio Codec and Audio-Text Joint Embedding for Automated Audio Captioning, IEEE ICASSP 2024 - fuses codec tokens with CLAP embeddings before an LLM decoder.
+20-07-2026
+6
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+5. Fathullah et al., Prompting Large Language Models with Speech Recognition Abilities, IEEE ICASSP 2024 - prepends speech-encoder features as soft prompts to a frozen LLM for ASR.
+6. Huang et al., Dynamic-SUPERB: Towards a Dynamic, Collaborative and Comprehensive Instruction-Tuning Benchmark for Speech, IEEE ICASSP 2024 - instruction-tuning benchmark spanning many speech/audio tasks.
+7. Feng & Narayanan, Foundation Model Assisted Automatic Speech Emotion Recognition: Transcribing, Annotating and Augmenting, IEEE ICASSP 2024 - uses foundation models to auto-generate SER training data.
+8. Zhu, Darefsky & Duan, Cacophony: An Improved Contrastive Audio-Text Model, IEEE/ACM TASLP, 2024 - two-stage contrastive pre-training that improves audio-text retrieval and captioning.
+Literature Survey - Reviewed Papers (9-15)
+9. Li et al., DRCap: Decoding CLAP Latents with Retrieval-Augmented Generation for Zero-Shot Audio Captioning, IEEE ICASSP 2025 - retrieval-augmented decoding of CLAP latents for unseen sound categories.
+10. Chen et al., SLAM-AAC: Enhancing Audio Captioning with Paraphrasing Augmentation and CLAP-Refine through LLMs, IEEE ICASSP 2025 - LLM-based paraphrase augmentation plus CLAP re-ranking for captioning.
+11. Kuan & Lee, Can Large Audio-Language Models Truly Hear? Tackling Hallucinations with Multi-Task Assessment and Stepwise Audio Reasoning, IEEE ICASSP 2025 - diagnoses and reduces hallucination in ALMs via stepwise reasoning.
+20-07-2026
+7
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+12. Wang et al., Enabling Auditory Large Language Models for Automatic Speech Quality Evaluation, IEEE ICASSP 2025 - fine-tunes an ALM to predict perceptual speech-quality scores.
+13. Bai et al., AudioSetCaps: An Enriched Audio-Caption Dataset Using Automated Generation Pipeline with Large Audio and Language Models, IEEE Trans. Audio, Speech and Language Processing, 2025 - LLM-automated captioning pipeline that scales caption datasets for ALM training.
+14. Jiang, Gamper & Braun, Sci-Phi: A Large Language Model Spatial Audio Descriptor, IEEE Open Journal of Signal Processing, 2026 - LLM grounded in spatial-audio features for scene description.
+15. (HumDial Challenge Organisers), The ICASSP 2026 HumDial Challenge: Benchmarking Human-like Spoken Dialogue Systems in the LLM Era, IEEE ICASSP 2026 - benchmark for emotional-intelligence and full-duplex audio-LLM dialogue.
+Comparative Analysis of Existing Approaches
+Advantages of Existing Approaches:
+Strong single-task performance: Whisper/CLAP-style encoders and ICASSP-2024/25 captioning models (EnCLAP, DRCap, SLAM-AAC) reach high accuracy on ASR and audio captioning.
+Reusable pretraining: contrastive audio-text embeddings (CLAP, Cacophony) transfer well to captioning, retrieval and zero-shot classification.
+Rich benchmarking: Dynamic-SUPERB and the ICASSP 2026 HumDial Challenge provide standardised, multi-task evaluation of audio-LLMs.
+Data-efficient adaptation: LLM-assisted annotation (Santoso et al.; Feng & Narayanan) cuts manual-labelling cost for emotion recognition.
+20-07-2026
+8
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Limitations of Existing Approaches:
+Task-specific silos: most models (captioning, ASR, SER, quality evaluation) are trained and evaluated on a single task, not a unified speech + non-speech + emotion pipeline.
+Hallucination and unreliable reasoning: Kuan & Lee (2025) show current large audio-language models frequently hallucinate about audio content that was never present.
+Research-scale only: most systems (captioning/quality models, HumDial baselines) are benchmarked offline and are not packaged as deployable, real-time full-stack applications.
+No persistent memory or agentic tool use is combined with joint speech + sound-event + emotion understanding in any single reviewed system.
+Research Gap and Justification
+Identified Research Gap:
+No reviewed IEEE paper unifies speech transcription, non-speech sound-event classification and voice-emotion recognition inside one deployable, real-time system.
+Hallucination and reasoning failures (Kuan & Lee, 2025) remain unresolved for open-domain audio question answering.
+Existing captioning/SER/quality-assessment models are evaluated as standalone research artefacts, not integrated with persistent memory (RAG) or agentic tool use.
+Benchmarks such as Dynamic-SUPERB and HumDial evaluate models offline; none provide a live, streaming, full-stack assistant.
+20-07-2026
+9
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Justification for Proposed Project:
+JARVIS ALM 2.0 fuses Whisper (speech), a PANNs/BEATs-style classifier (non-speech events) and Wav2Vec 2.0 (voice emotion) - directly addressing the task-silo gap found across papers 1-15.
+A persistent-memory RAG layer plus agentic tools move beyond the offline-benchmark scope of Dynamic-SUPERB/HumDial toward a deployable assistant.
+Stepwise reasoning and multi-signal grounding (speech + sound + tone) are used to reduce the hallucination risk reported by Kuan & Lee (2025).
+The project therefore extends current IEEE research from isolated audio-understanding components to one full-stack, real-time Audio Language Model.
+Existing Technology 
+Current Solutions: 
+OpenAI Whisper handles speech-to-text. 
+PANNs (CNN14) classifies 527 environmental sounds. SpeechBrain + Wav2Vec 2.0 detects emotion from speech audio. 
+ChromaDB enables vector-based semantic memory.
+ Azure OpenAI GPT provides reasoning and response generation.
+
+Limitations: 
+Each model works in isolation. 
+Whisper cannot understand background sounds. 
+PANNs cannot process speech. 
+Emotion models only analyze text, not actual voice tone. 
+No existing tool combines all three into one unified, reasoning system.
+
+20-07-2026
+10
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Technological Trends: 
+Multimodal AI (GPT-4o, Gemini) is moving toward unified audio-text understanding. 
+LoRA fine-tuning allows training large models with minimal compute. 
+WebSocket and SSE enable real-time AI communication. 
+These trends align exactly with our ALM 2.0 roadmap.
+Proposed Work/ Methodology
+Concept and Approach: 
+We take raw audio input and run it through three parallel AI modules: 
+Whisper for speech transcription. 
+PANNs/BEATs for non-speech sound classification (527 categories). 
+Wav2Vec 2.0 for voice emotion detection. The combined results are fed into GPT with memory (RAG) to generate intelligent, context-aware answers.
+
+Innovations: 
+Our innovation is the joint audio pipeline: 
+No existing deployable system merges real-time speech, sound event, and emotion recognition      	with persistent memory and agentic tools in one full-stack web application. 
+We also add SSE token streaming for real-time word-by-word responses.
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+20-07-2026
+11
+Feasibility: 
+All tools used (PANNs, SpeechBrain, Whisper, FastAPI, React) are open-source and already tested. We built and deployed the base system in 6th semester. 
+Phase 1 adds three well-scoped modules  each can be independently tested and integrated within a 2-week sprint.
+
+
+
+
+Research Design: 
+Modular development approach: build each AI module (audio classifier, emotion detector, streaming engine) separately, validate with unit tests, then integrate into CoreBrain. 
+The airport scenario (play mixed audio, ask JARVIS what is happening) serves as our end-to-end benchmark test.
+Proposed Work/ Methodology
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+20-07-2026
+12
+Tools and Techniques: 
+
+Expected Outcomes
+Results: 
+JARVIS ALM 2.0 will classify 527 non-speech sound types in real time. It will detect 5 emotions (happy, sad, angry, fearful, neutral) from voice tone. 
+It will answer complex scene questions like: What is happening in this audio? The system will stream responses word-by-word and show audio event tags and emotion badges in the chat UI.
+
+Benefits: 
+First deployable full-stack system combining speech + non-speech + emotion understanding. Fills the gap left by commercial assistants (Alexa, Siri) that only understand spoken words. 
+Provides real value to hearing-impaired users, accessibility researchers, and smart home developers. Eligible for publication at INTERSPEECH or ICASSP conferences.
+20-07-2026
+13
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Applications: 
+Smart surveillance: detect gunshot + speech simultaneously. 
+Assistive technology: help hearing-impaired users understand their environment. 
+Classroom monitoring: detect student engagement from audio. 
+Hospital alert systems: respond to patient calls combined with machine alarms. Meeting transcription with full scene context.
+Time frame/ Schedule for completion
+Timeline: 
+July 2026:
+Set up PANNs audio classifier and integrate with CoreBrain. 
+Build voice emotion detector using SpeechBrain + Wav2Vec 2.0. 
+August 2026: 
+Combine speech + sound + emotion into unified context pipeline. Add SSE streaming.
+Upgrade frontend UI (waveform visualizer, event tags, emotion badges). Add WebSocket chat.
+September 2026: 
+Full integration testing, bug fixes, performance tuning. 
+October 2026:
+Phase 1 Review submission with live demo.
+20-07-2026
+14
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Gantt Chart: 
+Budget
+Cost Breakdown: 
+Azure OpenAI API usage (GPT-3.5/4): approx. Rs. 1,500/month. 
+Google Colab Pro (A100 GPU for future training in Sem 8): approx. Rs. 1,000/month. 
+Domain and hosting (Phase 2): Rs. 2,000/year. 
+Total estimated budget for Phase 1 (Sem 7): Rs. 4,000 to Rs. 6,000.
+20-07-2026
+15
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 
+Resources Needed:
+Development laptops with 16GB RAM (already available). 
+Python 3.11+ environment with GPU support via Google Colab. 
+Azure OpenAI API subscription. 
+GitHub for version control. 
+AudioSet, IEMOCAP, and OpenAQA datasets (all publicly available, free to download).
+Funding Sources: 
+Self-funded by team members for API usage. 
+Third party funding for GPU cluster access for heavy model training in Phase 2
+Open-source datasets and pre-trained models eliminate major dataset collection costs.
+References
+[1] B. Elizalde, S. Deshmukh, M. Al Ismail, and H. Wang, "CLAP: Learning Audio Concepts from Natural Language Supervision," in Proc. IEEE ICASSP, 2023, pp. 1-5.
+[2] J. Santoso, K. Ishizuka, and T. Hashimoto, "LLM-Based Emotional Speech Annotation Using Context and Acoustic Feature for SER," in Proc. IEEE ICASSP, 2024, pp. 11026-11030.
+[3] C. Tang, W. Yu, G. Sun, X. Chen, T. Tan, W. Li, and C. Zhang, "Extending Large Language Models for Speech and Audio Captioning," in Proc. IEEE ICASSP, 2024, pp. 11236-11240.
+[4] J. Kim, J. Jung, J. Lee, and S. H. Woo, "EnCLAP: Combining Neural Audio Codec and Audio-Text Joint Embedding for Automated Audio Captioning," in Proc. IEEE ICASSP, 2024, pp. 6735-6739.
+[5] Y. Fathullah, C. Wu, E. Lakomkin, J. Jia, Y. Shangguan, K. Li, J. Guo, W. Xiong, J. Mahadeokar, and O. Kalinli, "Prompting Large Language Models with Speech Recognition Abilities," in Proc. IEEE ICASSP, 2024, pp. 13351-13355.
+[6] C. Huang, K.-H. Lu, S.-H. Wang, C.-Y. Hsiao, C.-Y. Kuan, et al., "Dynamic-SUPERB: A Dynamic, Collaborative, Comprehensive Instruction-Tuning Benchmark for Speech," in Proc. IEEE ICASSP, 2024, pp. 12136-12140.
+[7] T. Feng and S. Narayanan, "Foundation Model Assisted Automatic Speech Emotion Recognition: Transcribing, Annotating, and Augmenting," in Proc. IEEE ICASSP, 2024, pp. 12116-12120.
+[8] G. Zhu, J. Darefsky, and Z. Duan, "Cacophony: An Improved Contrastive Audio-Text Model," IEEE/ACM Trans. Audio, Speech, Language Process., vol. 32, pp. 4867-4879, 2024.
+[9] X. Li, W. Chen, Z. Ma, X. Xu, Y. Liang, Z. Zheng, and X. Chen, "DRCap: Decoding CLAP Latents with Retrieval-Augmented Generation for Zero-Shot Audio Captioning," in Proc. IEEE ICASSP, 2025, pp. 1-5.
+[10] W. Chen, Z. Ma, X. Li, X. Xu, Y. Liang, Z. Zheng, and X. Chen, "SLAM-AAC: Enhancing Audio Captioning with Paraphrasing Augmentation and CLAP-Refine through LLMs," in Proc. IEEE ICASSP, 2025, pp. 1-5.
+[11] C.-Y. Kuan and H.-y. Lee, "Can Large Audio-Language Models Truly Hear? Tackling Hallucinations with Multi-Task Assessment and Stepwise Audio Reasoning," in Proc. IEEE ICASSP, 2025, pp. 1-5.
+[12] S. Wang, W. Yu, Y. Yang, C. Tang, Y. Li, J. Zhuang, X. Chen, X. Tian, J. Zhang, and G. Sun, "Enabling Auditory Large Language Models for Automatic Speech Quality Evaluation," in Proc. IEEE ICASSP, 2025, pp. 1-5.
+[13] J. Bai, H. Liu, M. Wang, D. Shi, W. Wang, M. D. Plumbley, W.-S. Gan, and J. Chen, "AudioSetCaps: An Enriched Audio-Caption Dataset Using Automated Generation Pipeline with Large Audio and Language Models," IEEE/ACM Trans. Audio, Speech, Language Process., 2025.
+[14] X. Jiang, H. Gamper, and S. Braun, "Sci-Phi: A Large Language Model Spatial Audio Descriptor," IEEE Open J. Signal Process., 2026.
+[15] "The ICASSP 2026 HumDial Challenge: Benchmarking Human-like Spoken Dialogue Systems in the LLM Era," in Proc. IEEE ICASSP, 2026.
+20-07-2026
+16
+| Dept. of Computer Science and Engineering| PWP-I | Batch - II | Zeroth review | 

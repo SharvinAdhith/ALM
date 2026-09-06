@@ -159,6 +159,7 @@ async def chat_text(
 async def chat_audio(
     file: UploadFile = File(..., description="Audio blob (webm/wav/mp3)"),
     session_id: int | None = Form(None),
+    audio_model: str = Form("whisper-basic"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ChatAudioResponse:
@@ -173,22 +174,37 @@ async def chat_audio(
     finally:
         await file.close()
 
-    # ── Transcribe via JARVIS audio engine ────────────────────────────────
-    # transcribe_audio is sync + blocking — run in thread pool
+    # ── Transcribe + Analyse via scene_analyzer pipeline ─────────────────────
     import asyncio
-    from concurrent.futures import ThreadPoolExecutor
 
     loop = asyncio.get_running_loop()
     try:
         # Import lazily (JARVIS sys.path already set by jarvis_service)
-        from audio.audio_engine import transcribe_audio  # noqa: PLC0415
-        transcription: str = await loop.run_in_executor(
-            None, lambda: transcribe_audio(str(tmp_path))
+        from audio.scene_analyzer import analyze_audio_scene  # noqa: PLC0415
+
+        scene_result: dict = await loop.run_in_executor(
+            None,
+            lambda: analyze_audio_scene(str(tmp_path), audio_model),
         )
+
+        transcription: str = scene_result.get("transcription", "").strip()
+        enriched_transcription: str = scene_result.get("jarvis_prompt", transcription)
+        emotion_from_scene: str = scene_result.get("emotion") or "neutral"
+        scene_type: str = scene_result.get("scene_type") or ""
+        events_summary: str = scene_result.get("events_summary", "")
+
+        logger.info(
+            "Scene analysis | model=%s | scene=%s | noise=%s | events=%s",
+            audio_model,
+            scene_type,
+            scene_result.get("noise_level"),
+            events_summary[:60],
+        )
+
     except Exception as exc:
-        logger.exception("Transcription failed: %s", exc)
+        logger.exception("Scene analysis failed: %s", exc)
         return ChatAudioResponse(
-            response="Speech-to-text processing failed.",
+            response="Audio processing pipeline failed. Please try again.",
             emotion="error",
             transcription="",
             session_id=session_id or 0,
@@ -200,30 +216,38 @@ async def chat_audio(
         except OSError:
             pass
 
-    if not transcription.strip():
+    # For BAP model, even with no transcription we have scene analysis — proceed.
+    # For speech-only models, a blank transcription means nothing was heard.
+    if not transcription.strip() and audio_model != "alm-full-scene":
         return ChatAudioResponse(
-            response="I didn't catch that. Could you speak again?",
+            response="I didn't catch that. Could you speak again? Or try the BAP Model for ambient/non-speech audio.",
             emotion="neutral",
             transcription="",
             session_id=session_id or 0,
             messages=[],
         )
 
-    logger.info("Transcription: %.80r", transcription)
+    # Use spoken content for session title; fall back to scene type description
+    session_label = transcription.strip() or (f"Audio scene: {scene_type}" if scene_type else "Audio analysis")
+    logger.info("Audio session label: %.80r", session_label)
 
     # ── Resolve or create session ──────────────────────────────────────────
     session = await _get_or_create_session(
-        session_id, user, db, first_message=transcription
+        session_id, user, db, first_message=session_label
     )
 
     # ── Store user message (audio transcription) ───────────────────────────
+    user_display = transcription.strip() or (f"[Audio: {scene_type}]" if scene_type else "[Audio file]")
     user_msg = await _append_message(
-        db, session.id, role="user", content=transcription, transcription=transcription
+        db, session.id, role="user", content=user_display, transcription=transcription
     )
 
     # ── Call JARVIS brain ──────────────────────────────────────────────────
     try:
-        response_text, emotion = await jarvis_service.chat(transcription)
+        response_text, emotion = await jarvis_service.chat(enriched_transcription)
+        # Prefer scene emotion when JARVIS brain returns generic "neutral"
+        if emotion in ("neutral", "") and emotion_from_scene not in ("neutral", "", None):
+            emotion = emotion_from_scene
     except Exception as exc:
         logger.exception("JARVIS brain error: %s", exc)
         response_text = "Audio processing encountered an error."
@@ -244,6 +268,7 @@ async def chat_audio(
             ChatMessageOut.model_validate(jarvis_msg),
         ],
     )
+
 
 
 # ── Session management ────────────────────────────────────────────────────────

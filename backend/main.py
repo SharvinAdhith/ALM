@@ -27,7 +27,7 @@ logger = logging.getLogger("backend")
 # ── Import app modules ────────────────────────────────────────────────────────
 from backend.core.config import settings  # noqa: E402
 from backend.core.database import Base, engine  # noqa: E402
-from backend.routers import auth, jarvis  # noqa: E402
+from backend.routers import auth, jarvis, ws_chat  # noqa: E402
 from backend.services.jarvis_service import jarvis_service  # noqa: E402
 
 
@@ -97,6 +97,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(jarvis.router)
+app.include_router(ws_chat.router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

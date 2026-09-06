@@ -4,6 +4,7 @@ import Landing from './pages/Landing';
 import Auth from './pages/Auth';
 import ChatLayout from './pages/ChatLayout';
 import Chat from './pages/Chat';
+import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Pricing from './pages/Pricing';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -61,11 +62,14 @@ function App() {
         <Route element={<ProtectedRoute />}>
           <Route path="/chat" element={<ChatLayout />}>
             <Route index element={<Chat />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="pricing" element={<Pricing />} />
+            <Route path="profile" element={<Profile />} />
+            <Route path="settings" element={<Profile />} />
+          </Route>
+          <Route path="/profile" element={<ChatLayout />}>
+            <Route index element={<Profile />} />
           </Route>
           <Route path="/settings" element={<ChatLayout />}>
-            <Route index element={<Settings />} />
+            <Route index element={<Profile />} />
           </Route>
         </Route>
 

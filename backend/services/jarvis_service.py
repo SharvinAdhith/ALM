@@ -132,7 +132,8 @@ class JARVISService:
     async def chat_stream(self, text: str):
         """
         Async generator that yields SSE-formatted token chunks.
-        Uses the GPTResponder's streaming method for real-time token delivery.
+        Routes through CoreBrain.route so that intent handling, memory, and tool calls
+        (web_search, image_search, open_app, etc.) execute for typed text as well as voice.
         """
         if not self._initialized:
             raise RuntimeError("JARVISService not initialized. Call initialize() first.")
@@ -145,50 +146,18 @@ class JARVISService:
             lambda: self._get_intents_and_data(text),
         )
 
-        # Get semantic context
-        sem_context = await loop.run_in_executor(
+        # Route through CoreBrain to execute intent logic / tool router (opens browser, apps, etc.)
+        response_text, emotion = await loop.run_in_executor(
             _executor,
-            lambda: self._brain._retrieve_context(data),
+            lambda: self._brain.route(intents, data),
         )
 
-        # Stream tokens from GPTResponder using a thread-safe queue
-        import queue
-        token_queue: queue.Queue = queue.Queue()
-        _SENTINEL = object()
-
-        def _produce_tokens():
-            """Run in thread: push tokens into the queue."""
-            try:
-                for token in self._brain.gpt.generate_response_stream(data, sem_context):
-                    token_queue.put(token)
-            except Exception as e:
-                token_queue.put(f"[Stream error: {e}]")
-            finally:
-                token_queue.put(_SENTINEL)
-
-        # Start producer in thread pool
-        loop.run_in_executor(_executor, _produce_tokens)
-
-        # Yield tokens as SSE events
-        full_response = []
-        while True:
-            try:
-                token = await loop.run_in_executor(None, lambda: token_queue.get(timeout=30))
-            except Exception:
-                break
-            if token is _SENTINEL:
-                break
-            full_response.append(token)
-            yield token
-
-        # Store the full response in memory (fire-and-forget in thread)
-        joined = "".join(full_response)
-        await loop.run_in_executor(
-            _executor,
-            lambda: self._brain._store_turns(
-                user_text=data, assistant_text=joined, intent="unknown", emotion="neutral"
-            ),
-        )
+        # Stream response word by word with realistic typing delay
+        import re
+        words = re.findall(r'\S+\s*', response_text) or [response_text]
+        for word in words:
+            yield word
+            await asyncio.sleep(0.02)
 
     def _get_intents_and_data(self, text: str):
         """(Blocking) parse intents from text."""

@@ -1,0 +1,2 @@
+FastAPI: 0.115.6
+Starlette: 1.3.1

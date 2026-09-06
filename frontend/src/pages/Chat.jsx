@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Send, Mic, Square, Loader2, Bot, Volume2, Sparkles } from 'lucide-react';
+import { Send, Mic, Square, Loader2, Bot, Volume2, Sparkles, Upload, XCircle, StopCircle, Plus, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import AudioWaveform from '../components/AudioWaveform';
 
@@ -8,8 +8,58 @@ const API = 'http://localhost:8000';
 const SILENCE_THRESHOLD = 15;   // RMS amplitude 0-255
 const SILENCE_MS = 2800;        // 2.8 s of silence → auto-stop
 
-/* Read TTS preference from localStorage (updated by Settings page) */
+/* Read TTS preference from localStorage (updated by Profile/Settings page) */
 const isTtsEnabled = () => localStorage.getItem('jarvis_tts') !== '0';
+
+/**
+ * Parses raw tool-call JSON strings into clean, human-readable action messages.
+ * e.g. {"action":"call_tool","tool":"image_search","args":{"query":"Taj Mahal"}}
+ *   -> "Opened Google Chrome and searched for images of 'Taj Mahal'."
+ */
+function formatHumanReadableResponse(text) {
+  if (!text || typeof text !== 'string') return text;
+  try {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) {
+      const parsed = JSON.parse(text.slice(start, end + 1));
+      if (parsed && typeof parsed === 'object') {
+        const action = parsed.action;
+        const tool = parsed.tool || (action !== 'respond' ? action : null);
+        const args = parsed.args || {};
+
+        if (action === 'respond' && parsed.text) {
+          return parsed.text;
+        }
+
+        if (tool === 'image_search') {
+          return `Opened Google Chrome and searched for images of '${args.query || 'your query'}'.`;
+        }
+        if (tool === 'web_search') {
+          return `Opened Google Chrome tab with search results for '${args.query || 'your search'}'.`;
+        }
+        if (tool === 'youtube_play') {
+          return `Opened YouTube in Google Chrome to play '${args.query || 'video'}'.`;
+        }
+        if (tool === 'open_maps') {
+          return `Opened Google Maps for '${args.location || 'the location'}'.`;
+        }
+        if (tool === 'open_app') {
+          return `Launched '${args.app_name || 'the application'}' on your system.`;
+        }
+        if (tool === 'open_url') {
+          return `Opened '${args.url || 'the webpage'}' in Google Chrome.`;
+        }
+        if (tool) {
+          return `Action completed: '${tool}' executed successfully.`;
+        }
+      }
+    }
+  } catch {
+    /* silent fallback to original text */
+  }
+  return text;
+}
 
 export default function Chat() {
   const [messages, setMessages] = useState([]);
@@ -18,28 +68,52 @@ export default function Chat() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [silenceCountdown, setSilenceCountdown] = useState(null);
   const [activeStream, setActiveStream] = useState(null); // MediaStream for waveform
 
-  const mediaRecorderRef  = useRef(null);
-  const audioChunksRef    = useRef([]);
-  const animFrameRef      = useRef(null);
-  const messagesEndRef    = useRef(null);
-  const currentSessionRef = useRef(null); // avoids stale closure in handlers
+  // Model selection state with localStorage persistence
+  const [audioModel, setAudioModel] = useState(() => localStorage.getItem('jarvis_audio_model') || 'whisper-basic');
+  const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
+  const plusMenuRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.setItem('jarvis_audio_model', audioModel);
+  }, [audioModel]);
+
+  // Handle clicking outside the plus menu to close it
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (plusMenuRef.current && !plusMenuRef.current.contains(event.target)) {
+        setIsPlusMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const mediaRecorderRef    = useRef(null);
+  const audioChunksRef      = useRef([]);
+  const animFrameRef        = useRef(null);
+  const messagesEndRef      = useRef(null);
+  const currentSessionRef   = useRef(null); // avoids stale closure in handlers
+  const abortControllerRef  = useRef(null); // AbortController for cancelling HTTP requests
+  const fileInputRef        = useRef(null);
 
   const { token, user } = useAuth();
   const location         = useLocation();
   const navigate         = useNavigate();
 
   // ── Scroll ────────────────────────────────────────────────────────────────
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isTyping, isStreaming]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isTyping, isStreaming, isProcessingAudio]);
 
   // ── TTS ───────────────────────────────────────────────────────────────────
   const synthesizeSpeech = useCallback((text) => {
     if (!('speechSynthesis' in window)) return;
     if (!isTtsEnabled()) return;           // ← respects Settings toggle
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
+    const cleanText = formatHumanReadableResponse(text);
+    const u = new SpeechSynthesisUtterance(cleanText);
     u.rate = 1.05; u.pitch = 0.95;
     window.speechSynthesis.speak(u);
   }, []);
@@ -84,7 +158,6 @@ export default function Chat() {
       if (!msgs.length) { await fetchWelcome(); return; }
       setMessages(msgs.map(m => ({
         id: m.id,
-        // Normalize role: some older records may use 'assistant'
         role: m.role === 'assistant' ? 'jarvis' : m.role,
         content: m.content,
         emotion: m.emotion,
@@ -95,11 +168,10 @@ export default function Chat() {
 
   // ── Session init — reacts to URL changes + token availability ────────────
   useEffect(() => {
-    // Guard: don't run until auth token is available (avoids race on reload)
     if (!token) return;
 
     const params = new URLSearchParams(location.search);
-    const isNew       = params.get('new') === '1';
+    const isNew        = params.get('new') === '1';
     const sessionParam = params.get('session');
 
     if (isNew) {
@@ -116,11 +188,10 @@ export default function Chat() {
       const sid = Number(sessionParam);
       persistSession(sid);
       loadSessionMessages(sid);
-      navigate('/chat', { replace: true }); // clean URL after loading
+      navigate('/chat', { replace: true });
       return;
     }
 
-    // Plain /chat — restore from sessionStorage
     const storedSid = sessionStorage.getItem('jarvis_session_id');
     if (storedSid) {
       const sid = Number(storedSid);
@@ -133,22 +204,131 @@ export default function Chat() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search, token]);
 
+  // ── Stop / Cancel active audio processing or text generation ─────────────
+  const handleStopProcessing = () => {
+    // 1. Stop recording if recording
+    if (isRecording) {
+      cancelAnimationFrame(animFrameRef.current);
+      setSilenceCountdown(null);
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
+      setActiveStream(null);
+    }
+
+    // 2. Abort HTTP fetch request (stream or audio processing)
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // 3. Stop TTS
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    setIsProcessingAudio(false);
+    setIsStreaming(false);
+    setIsTyping(false);
+
+    // 4. Update processing / streaming message to cancelled state
+    setMessages(prev => prev.map(m =>
+      (m.processing || m.streaming)
+        ? { ...m, content: m.content ? `${m.content} [Stopped]` : '🛑 Processing cancelled by user.', processing: false, streaming: false }
+        : m
+    ));
+  };
+
+  // ── Process Audio File Blob (from Mic or File Upload) ─────────────────────
+  const sendAudioToBackend = async (blob, fileName = 'record.webm', displayLabel = '🎙️ Voice message') => {
+    const tempId = Date.now();
+    const processingMsgId = Date.now() + 1;
+    
+    const userAudioMsg = { id: tempId, role: 'user', content: displayLabel };
+    const processingMsg = { id: processingMsgId, role: 'jarvis', content: '', processing: true };
+    
+    setMessages(prev => [...prev, userAudioMsg, processingMsg]);
+    setIsProcessingAudio(true);
+
+    const form = new FormData();
+    form.append('file', blob, fileName);
+    form.append('audio_model', audioModel);
+    if (currentSessionRef.current) form.append('session_id', String(currentSessionRef.current));
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const res = await fetch(`${API}/api/v1/jarvis/audio`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+        signal: controller.signal,
+      });
+
+      if (!res.ok) throw new Error('Backend returned error status');
+
+      const data = await res.json();
+      if (data.session_id) persistSession(data.session_id);
+
+      const formattedResponse = formatHumanReadableResponse(data.response);
+
+      setMessages(prev => prev
+        .map(m => m.id === tempId ? { ...m, content: `🎵 "${data.transcription || fileName}"` } : m)
+        .map(m => m.id === processingMsgId ? { ...m, content: formattedResponse, emotion: data.emotion, processing: false } : m)
+      );
+      synthesizeSpeech(formattedResponse);
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        console.log('Audio upload/processing aborted by user.');
+        setMessages(prev => prev.map(m =>
+          m.id === processingMsgId ? { ...m, content: '🛑 Audio processing cancelled.', processing: false } : m
+        ));
+      } else {
+        setMessages(prev => prev.map(m =>
+          m.id === processingMsgId ? { ...m, content: 'Audio pipeline error. Please try again.', processing: false } : m
+        ));
+      }
+    } finally {
+      setIsProcessingAudio(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  // ── Audio File Upload Handler ─────────────────────────────────────────────
+  const handleAudioFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (isRecording || isProcessingAudio || isStreaming) {
+      alert('Please wait for the current action to finish or click stop.');
+      return;
+    }
+
+    sendAudioToBackend(file, file.name, `📁 Audio File: ${file.name}`);
+    // Clear input value so same file can be uploaded again if needed
+    e.target.value = '';
+  };
+
   // ── SSE Streaming text chat ───────────────────────────────────────────────
   const handleTextSend = async (e) => {
     e.preventDefault();
     const text = inputValue.trim();
-    if (!text || isTyping || isStreaming) return;
+    if (!text || isTyping || isStreaming || isProcessingAudio) return;
 
     setInputValue('');
     const userMsg = { id: Date.now(), role: 'user', content: text };
     const updated = [...messages, userMsg];
     setMessages(updated);
 
-    // Create a placeholder JARVIS message for streaming
     const jarvisMsgId = Date.now() + 1;
     const jarvisMsg = { id: jarvisMsgId, role: 'jarvis', content: '', streaming: true };
     setMessages([...updated, jarvisMsg]);
     setIsStreaming(true);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
       const res = await fetch(`${API}/api/v1/jarvis/stream`, {
@@ -158,21 +338,23 @@ export default function Chat() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ text, session_id: currentSessionRef.current }),
+        signal: controller.signal,
       });
 
       if (!res.ok) {
-        // Fallback to non-streaming endpoint
         const fallbackRes = await fetch(`${API}/api/v1/jarvis/text`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ text, session_id: currentSessionRef.current }),
+          signal: controller.signal,
         });
         const data = await fallbackRes.json();
         if (data.session_id) persistSession(data.session_id);
+        const formatted = formatHumanReadableResponse(data.response);
         setMessages(prev => prev.map(m =>
-          m.id === jarvisMsgId ? { ...m, content: data.response, emotion: data.emotion, streaming: false } : m
+          m.id === jarvisMsgId ? { ...m, content: formatted, emotion: data.emotion, streaming: false } : m
         ));
-        synthesizeSpeech(data.response);
+        synthesizeSpeech(formatted);
         setIsStreaming(false);
         return;
       }
@@ -188,20 +370,17 @@ export default function Chat() {
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n');
 
-        // First pass: detect meta event lines so we can skip their data lines
         const metaDataLines = new Set();
         for (let i = 0; i < lines.length; i++) {
           if (lines[i].startsWith('event: meta') && lines[i + 1]?.startsWith('data: ')) {
             metaDataLines.add(i + 1);
-            // Parse session_id here
             const sid = Number(lines[i + 1].slice(6));
             if (sid) persistSession(sid);
           }
         }
 
-        // Second pass: process only non-meta data lines
         for (let i = 0; i < lines.length; i++) {
-          if (metaDataLines.has(i)) continue; // skip — this is the session_id line
+          if (metaDataLines.has(i)) continue;
 
           const line = lines[i];
           if (!line.startsWith('data: ')) continue;
@@ -209,9 +388,13 @@ export default function Chat() {
           const payload = line.slice(6);
 
           if (payload === '[DONE]') {
-            setMessages(prev => prev.map(m =>
-              m.id === jarvisMsgId ? { ...m, streaming: false } : m
-            ));
+            setMessages(prev => prev.map(m => {
+              if (m.id === jarvisMsgId) {
+                const formatted = formatHumanReadableResponse(accumulated);
+                return { ...m, content: formatted, streaming: false };
+              }
+              return m;
+            }));
             synthesizeSpeech(accumulated);
             continue;
           }
@@ -223,7 +406,6 @@ export default function Chat() {
             continue;
           }
 
-          // Accumulate actual response token
           accumulated += payload;
           const current = accumulated;
           setMessages(prev => prev.map(m =>
@@ -232,12 +414,20 @@ export default function Chat() {
         }
       }
     } catch (err) {
-      console.error('Stream error:', err);
-      setMessages(prev => prev.map(m =>
-        m.id === jarvisMsgId ? { ...m, content: 'Connection error. Is the backend running?', streaming: false } : m
-      ));
+      if (err.name === 'AbortError') {
+        console.log('Stream aborted by user.');
+        setMessages(prev => prev.map(m =>
+          m.id === jarvisMsgId ? { ...m, content: m.content ? `${m.content} [Stopped]` : '🛑 Response stopped by user.', streaming: false } : m
+        ));
+      } else {
+        console.error('Stream error:', err);
+        setMessages(prev => prev.map(m =>
+          m.id === jarvisMsgId ? { ...m, content: 'Connection error. Is the backend running?', streaming: false } : m
+        ));
+      }
     } finally {
       setIsStreaming(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -267,7 +457,7 @@ export default function Chat() {
             setIsRecording(false);
             setActiveStream(null);
           }
-          return; // stop animation loop
+          return;
         }
       } else {
         silenceStart = null;
@@ -290,7 +480,7 @@ export default function Chat() {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      setActiveStream(stream); // Pass to AudioWaveform
+      setActiveStream(stream);
       const recorder = new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
@@ -304,38 +494,7 @@ export default function Chat() {
         if (!audioChunksRef.current.length) return;
 
         const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const tempId = Date.now();
-        const processingMsgId = Date.now() + 1;
-        // Show the user's recording as a microphone message
-        const userAudioMsg = { id: tempId, role: 'user', content: '🎙️ Voice message' };
-        // Show a circular-spinner processing bubble for JARVIS
-        const processingMsg = { id: processingMsgId, role: 'jarvis', content: '', processing: true };
-        const pendingBase = [...messages, userAudioMsg];
-        setMessages([...pendingBase, processingMsg]);
-
-        const form = new FormData();
-        form.append('file', blob, 'record.webm');
-        if (currentSessionRef.current) form.append('session_id', String(currentSessionRef.current));
-
-        try {
-          const res = await fetch(`${API}/api/v1/jarvis/audio`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-            body: form,
-          });
-          const data = await res.json();
-          if (data.session_id) persistSession(data.session_id);
-          // Replace user placeholder with transcription, replace spinner with response
-          setMessages(prev => prev
-            .map(m => m.id === tempId ? { ...m, content: `🎙️ "${data.transcription}"` } : m)
-            .map(m => m.id === processingMsgId ? { ...m, content: data.response, emotion: data.emotion, processing: false } : m)
-          );
-          synthesizeSpeech(data.response);
-        } catch {
-          setMessages(prev => prev.map(m =>
-            m.id === processingMsgId ? { ...m, content: 'Audio pipeline error.', processing: false } : m
-          ));
-        }
+        sendAudioToBackend(blob, 'record.webm', '🎙️ Voice message');
       };
 
       recorder.start(250);
@@ -375,18 +534,29 @@ export default function Chat() {
                     : 'bg-surface text-textMain border border-borderMuted rounded-bl-sm shadow-sm'
                   }`}
                 >
-                  {/* Audio processing spinner bubble */}
+                  {/* Audio processing spinner bubble with Stop Button */}
                   {msg.processing ? (
-                    <div className="flex items-center gap-3">
-                      <div className="relative w-5 h-5 shrink-0">
-                        <div className="absolute inset-0 rounded-full border-2 border-indigo-500/20" />
-                        <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-indigo-400 animate-spin" />
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="relative w-5 h-5 shrink-0">
+                          <div className="absolute inset-0 rounded-full border-2 border-indigo-500/20" />
+                          <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-indigo-400 animate-spin" />
+                        </div>
+                        <span className="text-textMuted text-sm">Processing your audio…</span>
                       </div>
-                      <span className="text-textMuted text-sm">Processing your audio…</span>
+                      <button
+                        type="button"
+                        onClick={handleStopProcessing}
+                        className="flex items-center gap-1 px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-xs font-semibold border border-red-500/20 transition-colors"
+                        title="Cancel audio processing"
+                      >
+                        <XCircle size={13} />
+                        Stop
+                      </button>
                     </div>
                   ) : (
                     <>
-                      {msg.content}
+                      {formatHumanReadableResponse(msg.content)}
                       {msg.streaming && <span className="typing-cursor" />}
                     </>
                   )}
@@ -411,7 +581,6 @@ export default function Chat() {
                 <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
               </div>
               <div className="px-5 py-3.5 rounded-2xl bg-surface border border-borderMuted flex items-center gap-3 shadow-sm">
-                {/* Circular spinner */}
                 <div className="relative w-5 h-5 shrink-0">
                   <div className="absolute inset-0 rounded-full border-2 border-indigo-500/20" />
                   <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-indigo-400 animate-spin" />
@@ -424,7 +593,7 @@ export default function Chat() {
         </div>
       </div>
 
-      {/* Input */}
+      {/* Input bar */}
       <div className="p-4 bg-background border-t border-borderMuted">
         <div className="max-w-3xl mx-auto">
           {/* Audio Waveform Visualization */}
@@ -435,39 +604,124 @@ export default function Chat() {
               🔇 Silence detected — auto-stopping in {silenceCountdown}s
             </p>
           )}
-          <div className="glass-strong rounded-2xl p-1.5 focus-within:glow-border transition-all flex items-end gap-1">
-            <button
-              type="button"
-              onClick={toggleRecording}
-              title={isRecording ? 'Stop recording' : 'Start voice input'}
-              className={`p-3 rounded-xl shrink-0 transition-all
-                ${isRecording
-                  ? 'bg-red-500 text-white recording-pulse'
-                  : 'text-textMuted hover:bg-surfaceHover hover:text-indigo-400'
-                }`}
-            >
-              {isRecording ? <Square size={19} /> : <Mic size={19} />}
-            </button>
-            <form className="flex-1 flex items-center min-h-[48px]" onSubmit={handleTextSend}>
+
+          {/* Hidden File Input for Audio Upload */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*"
+            onChange={handleAudioFileUpload}
+            className="hidden"
+          />
+
+          <div className="glass-strong rounded-2xl p-1.5 focus-within:glow-border transition-all flex items-end gap-1 relative">
+            {/* Plus Menu Container */}
+            <div className="relative" ref={plusMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsPlusMenuOpen(!isPlusMenuOpen)}
+                disabled={isRecording || isProcessingAudio || isStreaming}
+                title="Options"
+                className="p-3 text-textMuted hover:bg-surfaceHover hover:text-indigo-400 rounded-full shrink-0 transition-all disabled:opacity-40 flex items-center justify-center bg-surface border border-borderMuted shadow-sm ml-1 mb-0.5"
+              >
+                <Plus size={19} className={`transition-transform duration-200 ${isPlusMenuOpen ? 'rotate-45' : ''}`} />
+              </button>
+
+              {/* Popup Menu */}
+              {isPlusMenuOpen && (
+                <div className="absolute bottom-full left-0 mb-3 w-64 bg-surface border border-borderMuted rounded-2xl shadow-xl shadow-black/10 overflow-hidden flex flex-col z-50 py-2 animate-fade-in text-left">
+                  
+                  {/* Upload File */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                        fileInputRef.current?.click();
+                        setIsPlusMenuOpen(false);
+                    }}
+                    className="flex items-center gap-3 px-4 py-2.5 text-[15px] font-medium text-textMain hover:bg-surfaceHover w-full transition-colors"
+                  >
+                    <Upload size={16} className="text-textMuted" />
+                    Upload Audio File
+                  </button>
+
+                  <div className="h-px bg-borderMuted my-1.5 mx-4"></div>
+
+                  <div className="px-4 py-1.5 text-xs font-semibold text-textMuted uppercase tracking-wider">
+                    Audio Model
+                  </div>
+                  
+                  {[
+                    { id: 'whisper-basic', label: 'Whisper Basic (Fast)' },
+                    { id: 'alm-full-scene', label: 'BAP Model' },
+                    { id: 'whisper-multi', label: 'Multilingual Voice' }
+                  ].map(model => (
+                    <button
+                      key={model.id}
+                      type="button"
+                      onClick={() => {
+                         setAudioModel(model.id);
+                         setIsPlusMenuOpen(false);
+                      }}
+                      className="flex items-center justify-between px-4 py-2.5 text-[14px] text-textMain hover:bg-surfaceHover w-full transition-colors"
+                    >
+                      <span className="truncate pr-2">{model.label}</span>
+                      {audioModel === model.id && <Check size={16} className="text-indigo-500 shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <form className="flex-1 flex items-center min-h-[48px] bg-transparent" onSubmit={handleTextSend}>
               <input
                 type="text"
-                readOnly={isRecording}
-                value={isRecording ? '🎙️ Listening… (click ■ or wait for silence)' : inputValue}
+                readOnly={isRecording || isProcessingAudio}
+                value={
+                  isRecording
+                    ? '🎙️ Listening… (click ■ to stop)'
+                    : isProcessingAudio
+                    ? '⏳ Processing audio… (click ■ to stop)'
+                    : inputValue
+                }
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder="Ask JARVIS anything…"
-                className="w-full bg-transparent border-none outline-none text-textMain placeholder-textMuted py-2 px-2 focus:ring-0 text-[15px]"
+                placeholder="Ask JARVIS anything or upload audio…"
+                className="w-full bg-transparent border-none outline-none text-textMain placeholder-textMuted py-2 px-3 focus:ring-0 text-[15px]"
               />
-              <button
-                type="submit"
-                disabled={!inputValue.trim() || isRecording || isTyping || isStreaming}
-                className="p-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl hover:from-indigo-600 hover:to-purple-700 disabled:opacity-40 transition-all shrink-0 mr-1 shadow-lg shadow-indigo-500/20 disabled:shadow-none"
-              >
-                {isStreaming ? <Sparkles size={17} className="animate-pulse" /> : <Send size={17} />}
-              </button>
+
+              {/* Mic / Stop Button */}
+              {isRecording || isProcessingAudio || isStreaming ? (
+                <button
+                  type="button"
+                  onClick={handleStopProcessing}
+                  title="Stop processing"
+                  className="p-2.5 bg-textMain text-background rounded-full hover:bg-textMuted transition-all shrink-0 mr-1 flex items-center justify-center shadow-md animate-fade-in"
+                >
+                  <Square size={17} className="fill-current" />
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={toggleRecording}
+                    title="Start voice input"
+                    className="p-2.5 text-textMuted hover:bg-surfaceHover hover:text-indigo-400 rounded-full shrink-0 transition-all mr-1"
+                  >
+                    <Mic size={19} />
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!inputValue.trim() || isTyping || isStreaming || isProcessingAudio || isRecording}
+                    title="Send message"
+                    className="p-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-full hover:from-indigo-600 hover:to-purple-700 disabled:opacity-40 transition-all shrink-0 mr-1 shadow-md disabled:shadow-none"
+                  >
+                    <Send size={17} />
+                  </button>
+                </>
+              )}
             </form>
           </div>
           <p className="text-center text-xs text-textMuted mt-2.5 opacity-50">
-            JARVIS ALM — Deep Learning Audio Language Model · Streaming enabled
+            JARVIS ALM — Deep Learning Audio Language Model · Streaming & Audio Upload enabled
           </p>
         </div>
       </div>

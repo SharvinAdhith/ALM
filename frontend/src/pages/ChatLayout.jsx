@@ -160,7 +160,7 @@ function UserMenuPopup({ user, initials, theme, onToggleTheme, onLogout, onArchi
 
         {/* User header row */}
         <button
-          onClick={() => { navigate('/chat/settings'); onClose(); }}
+          onClick={() => { navigate('/chat/profile'); onClose(); }}
           className="w-full flex items-center gap-3 px-3.5 py-3 hover:bg-surfaceHover transition-colors group border-b border-borderMuted mb-1"
         >
           <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-xs text-white shadow-lg shadow-indigo-500/20 shrink-0">
@@ -176,23 +176,23 @@ function UserMenuPopup({ user, initials, theme, onToggleTheme, onLogout, onArchi
         {/* Menu items */}
         <div className="px-1.5 space-y-0.5">
           <button
-            onClick={() => { navigate('/chat/pricing'); onClose(); }}
+            onClick={() => { navigate('/pricing'); onClose(); }}
             className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-textMain hover:bg-surfaceHover rounded-xl transition-colors"
           >
             <Crown className="w-4 h-4 text-amber-400 shrink-0" />
             Upgrade plan
           </button>
 
-          {/* <button
-            onClick={() => { navigate('/chat/settings'); onClose(); }}
+          <button
+            onClick={() => { navigate('/chat/profile'); onClose(); }}
             className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-textMain hover:bg-surfaceHover rounded-xl transition-colors"
           >
             <User className="w-4 h-4 opacity-70 shrink-0" />
             Profile
-          </button> */}
+          </button>
 
           <button
-            onClick={() => { navigate('/chat/settings'); onClose(); }}
+            onClick={() => { navigate('/chat/profile'); onClose(); }}
             className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-textMain hover:bg-surfaceHover rounded-xl transition-colors"
           >
             <Settings className="w-4 h-4 opacity-70 shrink-0" />

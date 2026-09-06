@@ -99,7 +99,7 @@ export default function Pricing() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center py-20 px-4 relative overflow-hidden transition-colors duration-300">
+    <div className="min-h-screen bg-background flex flex-col items-center py-20 px-4 relative overflow-y-auto overflow-x-hidden transition-colors duration-300">
       {toast && <Toast message={toast} onClose={() => setToast(null)} />}
 
       {/* Background blobs */}
