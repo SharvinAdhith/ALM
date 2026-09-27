@@ -1,6 +1,71 @@
+# Environment & Secret files
+.env
+.env.*
+*.env
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Python Virtual Environments & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+JARVIS/venv/
+
+# Databases & Vector Storage
+*.db
+*.sqlite
+*.sqlite3
+jarvis_users.db
+chroma_db/
+chroma/
+vector_db/
+
+# Temporary Audio Cache & SpeechBrain Models
+JARVIS/cache/
+cache/
+tmp_speechbrain/
+tmp/
+*.webm
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.flac
+
+# Local App & User Memory Caches
+JARVIS/memory.json
+JARVIS/tools/app_cache.json
+JARVIS/tools/app_registry.json
+
+# Logs
+*.log
+JARVIS/actions.log
+
+# Build & Output Directories
+dist/
+build/
+frontend/dist/
+frontend/build/
+
+# OS & IDE Junk
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.tmp
+tmp_git_status.txt
+
+
 *.pptx
 *.md
 *db
 *.json
 *ps1
-node_modules/
+*.txt

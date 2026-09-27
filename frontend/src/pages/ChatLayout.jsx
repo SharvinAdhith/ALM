@@ -564,7 +564,7 @@ export default function ChatLayout() {
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md shadow-indigo-500/20">
                 <Bot className="w-4 h-4 text-white" />
               </div>
-              <span>JARVIS<span className="text-xs font-light text-textMuted ml-0.5">ALM</span></span>
+              <span className="tracking-wide">MINIALM</span>
             </Link>
           )}
           <button
@@ -778,7 +778,7 @@ export default function ChatLayout() {
               <PanelLeft size={20} />
             </button>
             <div className="flex items-center gap-2">
-              <span className="font-semibold text-sm hidden sm:block">JARVIS</span>
+              <span className="font-semibold text-sm hidden sm:block tracking-wide">MINIALM</span>
               <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 text-[10px] font-semibold uppercase tracking-wider border border-indigo-500/20">
                 <Sparkles className="w-2.5 h-2.5" /> ALM 2.0
               </span>

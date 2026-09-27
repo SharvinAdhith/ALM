@@ -39,12 +39,23 @@ def analyze_audio_scene(file_path: str, audio_model: str = "whisper-basic") -> d
             "jarvis_prompt":  str,          Full prompt to send to JARVIS brain
         }
     """
-    if audio_model == "alm-full-scene":
-        return _analyze_bap(file_path)
-    elif audio_model == "whisper-multi":
-        return _analyze_multilingual(file_path)
-    else:
-        return _analyze_whisper_basic(file_path)
+    import os
+    from audio.audio_engine import ensure_wav_file
+
+    wav_path = ensure_wav_file(file_path)
+    try:
+        if audio_model == "alm-full-scene":
+            return _analyze_bap(wav_path)
+        elif audio_model == "whisper-multi":
+            return _analyze_multilingual(wav_path)
+        else:
+            return _analyze_whisper_basic(wav_path)
+    finally:
+        if wav_path != file_path and os.path.exists(wav_path):
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
 
 
 # ── Model 1: Whisper Basic ─────────────────────────────────────────────────────

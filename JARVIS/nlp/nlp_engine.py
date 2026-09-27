@@ -38,6 +38,8 @@ class NLPEngine:
             " - If the user uses explicit deletion words ('forget', 'delete', 'remove') include 'forget'.\n"
             " - If the user greets ('hey', 'hello') include 'greeting'. If the user both greets and states something, include both, but prefer content intents like 'remember' or 'emotion' first.\n"
             " - If the user expresses feelings or mood (e.g., 'I am sad', 'I feel happy', 'I really like this') include 'emotion'.\n"
+            " - If the user explicitly asks to stop, quit, exit, or shut down, use 'shutdown'. DO NOT use 'shutdown' for confirming actions like 'yes' or 'no'.\n"
+            " - If none of the above fit (e.g. asking a random question, requesting an action, confirming), just output [\"unknown\"].\n"
             " - Respond ONLY with a JSON array of intents, e.g. [\"remember\", \"greeting\", \"emotion\"]. No extra text.\n\n"
             "Examples:\n"
             "User: 'Hey Jarvis' -> [\"greeting\"]\n"
@@ -46,6 +48,7 @@ class NLPEngine:
             "User: 'What's my favorite drink?' -> [\"recall\"]\n"
             "User: 'Actually, forget my favorite drink' -> [\"forget\"]\n"
             "User: 'I'm feeling sad today' -> [\"emotion\"]\n"
+            "User: 'Yes, I said open YouTube' -> [\"unknown\"]\n"
             "User: 'Exit, goodbye' -> [\"shutdown\"]\n\n"
             "Now classify the following user message."
         )
@@ -153,3 +156,22 @@ class NLPEngine:
         except Exception as e:
             print(f"[Recall key extraction failed]: {e}")
             return None
+
+    def extract_emotion(self, text):
+        """Extract a single word representing the emotion in the text."""
+        system_prompt = "Analyze the text and return a single lowercase word representing the primary emotion (e.g., happy, sad, angry, stressed, calm, neutral)."
+        user_prompt = f"Text: {text}\nEmotion:"
+        try:
+            response = self._client.chat.completions.create(
+                model=self._deployment,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_completion_tokens=10,
+                temperature=0,
+            )
+            return response.choices[0].message.content.strip().lower().strip("'`\".")
+        except Exception as e:
+            print(f"[Emotion extraction failed]: {e}")
+            return "neutral"

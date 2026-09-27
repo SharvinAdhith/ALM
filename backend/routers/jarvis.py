@@ -103,6 +103,21 @@ async def _append_message(
     return msg
 
 
+async def _get_recent_history(db: AsyncSession, session_id: int) -> list[dict]:
+    history_result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(12)
+    )
+    msgs = list(history_result.scalars().all())
+    msgs.reverse()
+    return [
+        {"role": "user" if m.role == "user" else "assistant", "content": m.content}
+        for m in msgs if m.content
+    ]
+
+
 # ── Text chat ─────────────────────────────────────────────────────────────────
 
 @router.post(
@@ -127,7 +142,8 @@ async def chat_text(
 
     # ── Call JARVIS brain (runs in thread pool to keep loop responsive) ────
     try:
-        response_text, emotion = await jarvis_service.chat(payload.text)
+        history = await _get_recent_history(db, session.id)
+        response_text, emotion = await jarvis_service.chat(payload.text, history=history)
     except Exception as exc:
         logger.exception("JARVIS brain error: %s", exc)
         response_text = "I encountered an internal error. Please try again."
@@ -244,7 +260,8 @@ async def chat_audio(
 
     # ── Call JARVIS brain ──────────────────────────────────────────────────
     try:
-        response_text, emotion = await jarvis_service.chat(enriched_transcription)
+        history = await _get_recent_history(db, session.id)
+        response_text, emotion = await jarvis_service.chat(enriched_transcription, history=history)
         # Prefer scene emotion when JARVIS brain returns generic "neutral"
         if emotion in ("neutral", "") and emotion_from_scene not in ("neutral", "", None):
             emotion = emotion_from_scene
@@ -465,6 +482,9 @@ async def chat_stream(
         payload.session_id, user, db, first_message=payload.text
     )
 
+    # Load recent conversation history BEFORE storing the new user message
+    history = await _get_recent_history(db, session.id)
+
     # Store user message (runs while DI db session is still alive)
     await _append_message(db, session.id, role="user", content=payload.text)
 
@@ -474,7 +494,7 @@ async def chat_stream(
     async def event_generator():
         full_response = []
         try:
-            async for token in jarvis_service.chat_stream(payload.text):
+            async for token in jarvis_service.chat_stream(payload.text, history=history):
                 full_response.append(token)
                 # SSE format: data: <content>\n\n
                 yield f"data: {token}\n\n"

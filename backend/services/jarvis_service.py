@@ -107,9 +107,15 @@ class JARVISService:
         logger.info("JARVIS core ready.")
 
     # ── Public API ──────────────────────────────────────────────────────────
-    async def chat(self, text: str) -> Tuple[str, str]:
+    async def chat(self, text: str, history: list | None = None) -> Tuple[str, str]:
         """
         Process *text* through the JARVIS brain.
+
+        Args:
+            text: Current user message.
+            history: List of {"role": ..., "content": ...} dicts from the DB session
+                     (most recent N turns, oldest first). Used to build conversation
+                     context so the LLM understands references like "that" or "it".
 
         Returns (response_text, emotion_label).
         Runs synchronous CoreBrain.route() in a thread pool to avoid
@@ -125,15 +131,19 @@ class JARVISService:
         )
         response, emotion = await loop.run_in_executor(
             _executor,
-            lambda: self._brain.route(intents, data),
+            lambda: self._brain.route(intents, data, history=history or []),
         )
         return response, emotion
 
-    async def chat_stream(self, text: str):
+    async def chat_stream(self, text: str, history: list | None = None):
         """
         Async generator that yields SSE-formatted token chunks.
         Routes through CoreBrain.route so that intent handling, memory, and tool calls
         (web_search, image_search, open_app, etc.) execute for typed text as well as voice.
+
+        Args:
+            text: Current user message.
+            history: List of {"role": ..., "content": ...} dicts for conversation context.
         """
         if not self._initialized:
             raise RuntimeError("JARVISService not initialized. Call initialize() first.")
@@ -149,7 +159,7 @@ class JARVISService:
         # Route through CoreBrain to execute intent logic / tool router (opens browser, apps, etc.)
         response_text, emotion = await loop.run_in_executor(
             _executor,
-            lambda: self._brain.route(intents, data),
+            lambda: self._brain.route(intents, data, history=history or []),
         )
 
         # Stream response word by word with realistic typing delay

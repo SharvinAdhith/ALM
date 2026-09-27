@@ -250,20 +250,23 @@ class FunctionRouter:
         # ── youtube_play ──────────────────────────────────────────────────
         def youtube_play(query: str):
             """Search YouTube and open the results so the user can watch/listen."""
-            from urllib.parse import quote_plus
-            url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+            query_clean = query.lower().replace('search youtube for', '').replace('search a video in youtube', '').replace('youtube', '').replace('search', '').strip()
+            if not query_clean:
+                url = "https://www.youtube.com"
+            else:
+                from urllib.parse import quote_plus
+                url = f"https://www.youtube.com/results?search_query={quote_plus(query_clean)}"
             try:
                 webbrowser.open(url, new=2)
-                return {"status": "opened", "query": query, "url": url}
+                return {"status": "opened", "query": query_clean, "url": url}
             except Exception as e:
                 return {"error": str(e)}
 
         self.registry.register(youtube_play, ToolSpec(
             name="youtube_play",
             description=(
-                "Search YouTube and open the results page so the user can play a video or song. "
-                "Use for: 'play [song]', 'play [song] on YouTube', 'find video of [topic]', "
-                "'play music', 'open YouTube search for [query]'."
+                "Search YouTube and open the results page. If the user just wants to open YouTube, pass an empty string as query. "
+                "Use for: 'play [song]', 'open youtube', 'search a video in youtube for [topic]'."
             ),
             args_schema={"query": "string"}
         ))
@@ -363,16 +366,18 @@ class FunctionRouter:
             f"   Allowed JSON objects (only these forms) are: {allowed_actions}.\n\n"
 
             "2) If you can answer without calling any tool, return EXACTLY:\n"
-            "{\"action\": \"respond\", \"text\": \"<final user-facing answer>\"}\n\n"
-
-            "3) If you need to call a tool, return EXACTLY one object and NOTHING else, with this form:\n"
+            "{\"action\": \"respond\", \"text\": \"<final user-facing answer>\"}\n"
+            "   IMPORTANT: NEVER use 'respond' to announce that you are performing an action. If the user asks you to search, play, open, or do something, you MUST use 'call_tool'.\n\n"
+            
+            "3) If you need to call a tool (e.g. to open youtube or search the web), return EXACTLY one object and NOTHING else, with this form:\n"
             "{\"action\": \"call_tool\", \"tool\": \"<tool_name>\", \"args\": { ... }}\n"
             "   - <tool_name> must be one of the tools listed below (use the exact tool name).\n"
             "   - args must be a JSON object matching the tool's args_schema. Do NOT invent extra fields.\n\n"
 
             "4) AFTER the tool is executed by the system, the system will call you again and the context will include\n"
             "   a <tool_result> block containing the tool output. When you see <tool_result> in the context,\n"
-            "   you MUST return EXACTLY a RESPOND object and NOTHING else. Example (after tool result):\n"
+            "   you MUST return EXACTLY a RESPOND object and NOTHING else. DO NOT CALL ANOTHER TOOL.\n"
+            "   Example (after tool result):\n"
             "{\"action\": \"respond\", \"text\": \"I opened the page for you.\"}\n\n"
 
             "5) NEVER return tool-specific shortcut objects like {\"action\":\"open_url\", ...} or {\"action\":\"list_files\", ...}.\n"
@@ -423,13 +428,21 @@ class FunctionRouter:
         )
         return sys
 
-    def _call_llm_once(self, user_input: str, semantic_context: str) -> Optional[str]:
+    def _call_llm_once(self, user_input: str, semantic_context: str, history: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         manifest = self.registry.manifest()
         sys = self._build_system_prompt(manifest)
-        messages = [
-            {"role": "system", "content": sys},
-            {"role": "user", "content": f"<context>\n{semantic_context}\n</context>\nUser: {user_input}\nResponse:"}
-        ]
+        
+        messages = [{"role": "system", "content": sys}]
+        for turn in (history or [])[-12:]:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            if role not in ("user", "assistant"):
+                role = "assistant"
+            if content:
+                messages.append({"role": role, "content": content})
+                
+        messages.append({"role": "user", "content": f"<context>\n{semantic_context}\n</context>\nUser: {user_input}\nResponse (MUST BE EXACT JSON ONLY):"})
+        
         try:
             resp = self.gpt.client.chat.completions.create(
                 model=self.gpt.deployment,
@@ -520,7 +533,7 @@ class FunctionRouter:
         return text
 
     # ---------------- orchestrator ----------------
-    def plan_and_execute(self, user_input: str, semantic_context: str = "") -> str:
+    def plan_and_execute(self, user_input: str, semantic_context: str = "", history: Optional[List[Dict[str, Any]]] = None) -> str:
         MAX_STEPS = 4
         step = 0
         last_llm_text = None
@@ -529,7 +542,7 @@ class FunctionRouter:
         while step < MAX_STEPS:
             step += 1
             print(f"[FunctionRouter] Step {step} — calling LLM")
-            llm_text = self._call_llm_once(user_input, semantic_context)
+            llm_text = self._call_llm_once(user_input, semantic_context, history=history)
             last_llm_text = llm_text
             if not llm_text:
                 return "I'm having trouble contacting my thinker right now."

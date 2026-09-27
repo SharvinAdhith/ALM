@@ -165,17 +165,25 @@ Instructions:
 - Keep replies friendly and to-the-point.
 """
 
-    def generate_response(self, user_input: str, semantic_context: Optional[str] = None) -> str:
+    def generate_response(self, user_input: str, semantic_context: Optional[str] = None, history: Optional[List[Dict[str, Any]]] = None) -> str:
         system_msg = _build_persona_prompt()
         user_prompt = self._build_user_prompt(user_input, semantic_context)
+
+        # Build conversation messages: system → history turns → current user turn
+        messages = [{"role": "system", "content": system_msg}]
+        for turn in (history or [])[-12:]:  # last 12 turns (6 exchanges) for context window
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            if role not in ("user", "assistant"):
+                role = "assistant"  # map "jarvis" -> "assistant"
+            if content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": user_prompt})
 
         try:
             resp = self.client.chat.completions.create(
                 model=self.deployment,
-                messages=[
-                    {"role": "system", "content": system_msg},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=messages,
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
@@ -183,7 +191,7 @@ Instructions:
             return "I'm having trouble generating a response right now."
 
     def generate_response_stream(
-        self, user_input: str, semantic_context: Optional[str] = None
+        self, user_input: str, semantic_context: Optional[str] = None, history: Optional[List[Dict[str, Any]]] = None
     ) -> Generator[str, None, None]:
         """
         Yield response tokens one by one using Azure OpenAI stream=True.
@@ -192,13 +200,21 @@ Instructions:
         system_msg = _build_persona_prompt()
         user_prompt = self._build_user_prompt(user_input, semantic_context)
 
+        # Build conversation messages: system → history turns → current user turn
+        messages = [{"role": "system", "content": system_msg}]
+        for turn in (history or [])[-12:]:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            if role not in ("user", "assistant"):
+                role = "assistant"  # map "jarvis" -> "assistant"
+            if content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": user_prompt})
+
         try:
             stream = self.client.chat.completions.create(
                 model=self.deployment,
-                messages=[
-                    {"role": "system", "content": system_msg},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=messages,
                 stream=True,
             )
             for chunk in stream:

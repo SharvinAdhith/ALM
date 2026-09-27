@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 
 # ── FastAPI application ───────────────────────────────────────────────────────
 app = FastAPI(
-    title="JARVIS AI Backend",
+    title="MINIALM AI BACKEND",
     description=(
         "Production backend for the JARVIS Audio Language Model frontend. "
         "Provides JWT authentication, user-scoped chat history, and a "

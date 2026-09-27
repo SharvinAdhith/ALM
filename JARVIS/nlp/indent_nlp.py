@@ -63,13 +63,16 @@ class CoreBrain:
         t = text.lower()
         return any(kw in t for kw in ["forget", "delete", "remove", "clear this", "erase"])
 
-    def route(self, intents, data):
+    def route(self, intents, data, history: list | None = None):
         """
         Route the user utterance to the appropriate intent handler.
 
         Args:
             intents (list[str]): Ranked list of possible intents (from classifier).
             data (str): Raw user utterance.
+            history (list): List of {"role": ..., "content": ...} dicts representing
+                            prior turns in this DB session (oldest first). Passed to
+                            the LLM so it can resolve references like "explain that".
 
         Flow:
             1. Resolve top-priority intent using priority_order.
@@ -86,7 +89,10 @@ class CoreBrain:
             - Speaks response via self.speaker.
             - Stores user+assistant turns into memory.
         """
-        emotion = "neutral"  # placeholder; wire actual emotion from NLP if available
+        history = history or []
+        emotion = "neutral"
+        if "emotion" in intents:
+            emotion = self.nlp.extract_emotion(data)
         response = "I'm not sure what that means yet."
 
         try:
@@ -106,12 +112,14 @@ class CoreBrain:
                         self.memory.forget(key)
                         response = self.gpt.generate_response(
                             f"I've removed the stored detail for '{key}'. I'll no longer use it. Confirm kindly without using the words forget/delete/remove.",
-                            semantic_context=sem_context
+                            semantic_context=sem_context,
+                            history=history
                         )
                     else:
                         response = self.gpt.generate_response(
                             f"It sounds like you want me to remove something, but I couldn't identify what. Which detail should I remove?",
-                            semantic_context=sem_context
+                            semantic_context=sem_context,
+                            history=history
                         )
                 else:
                     # Implicit update / negation (e.g., "I don't like coffee anymore")
@@ -120,7 +128,8 @@ class CoreBrain:
                         self.memory.remember(key, value)
                         response = self.gpt.generate_response(
                             f"Got it — I updated {key} to {value}. I'll keep the history, and use the latest as your current preference.",
-                            semantic_context=sem_context
+                            semantic_context=sem_context,
+                            history=history
                         )
                     elif looks_like_negation(data):
                         # store raw negation in semantic memory
@@ -137,17 +146,20 @@ class CoreBrain:
                             self.memory.remember(key_guess, data)
                             response = self.gpt.generate_response(
                                 f"Understood. I've noted the update for '{key_guess}'. I'll treat the latest as your current preference.",
-                                semantic_context=sem_context
+                                semantic_context=sem_context,
+                                history=history
                             )
                         else:
                             response = self.gpt.generate_response(
                                 "Thanks — I noted that change. I kept the past records too, so I can compare them when asked.",
-                                semantic_context=sem_context
+                                semantic_context=sem_context,
+                                history=history
                             )
                     else:
                         response = self.gpt.generate_response(
                             "I heard that you want to change something. Could you say explicitly 'forget X' if you want me to remove it, or 'remember that X is Y' to update?",
-                            semantic_context=sem_context
+                            semantic_context=sem_context,
+                            history=history
                         )
 
             # === Remember Intent ===
@@ -157,7 +169,8 @@ class CoreBrain:
                     self.memory.remember(key, value)
                     response = self.gpt.generate_response(
                         f"Please confirm you saved: {key} = {value}. Be warm and concise.",
-                        semantic_context=sem_context
+                        semantic_context=sem_context,
+                        history=history
                     )
                 else:
                     try:
@@ -169,7 +182,8 @@ class CoreBrain:
                         print(f"[Semantic memory store fallback failed]: {e}")
                     response = self.gpt.generate_response(
                         "Thanks — I've noted that.",
-                        semantic_context=sem_context
+                        semantic_context=sem_context,
+                        history=history
                     )
 
             # === Recall Intent ===
@@ -178,26 +192,30 @@ class CoreBrain:
                 if not key:
                     response = self.gpt.generate_response(
                         f"The user asked: '{data}'. If the retrieved memories answer it, use them. If not, be honest and ask for clarification.",
-                        semantic_context=sem_context
+                        semantic_context=sem_context,
+                        history=history
                     )
                 else:
                     value = self.memory.recall(key)
                     if value == "I don't remember that yet.":
                         response = self.gpt.generate_response(
                             f"The user asked: '{data}'. Use retrieved memories if they answer it; otherwise be honest that you don't have a stored fact.",
-                            semantic_context=sem_context
+                            semantic_context=sem_context,
+                            history=history
                         )
                     else:
                         response = self.gpt.generate_response(
                             f"The user asked: '{data}'. Explicit KV memory says: {key} = {value}. Answer naturally using that fact.",
-                            semantic_context=sem_context
+                            semantic_context=sem_context,
+                            history=history
                         )
 
             # === Greeting ===
             elif chosen == "greeting":
                 response = self.gpt.generate_response(
                     "The user greeted me. Respond politely, friendly, and keep it short.",
-                    semantic_context=sem_context
+                    semantic_context=sem_context,
+                    history=history
                 )
 
             # === Emotion ===
@@ -211,14 +229,15 @@ class CoreBrain:
                     print(f"[SemanticMemory store(emotion) failed]: {e}")
                 response = self.gpt.generate_response(
                     f"The user expressed feelings: '{data}'. Respond empathically and supportive, keep it brief.",
-                    semantic_context=sem_context
+                    semantic_context=sem_context,
+                    history=history
                 )
 
             # === Shutdown ===
             elif chosen == "shutdown":
-                self.speaker.speak("Shutting down. Goodbye.")
+                response = "Shutting down. Goodbye."
+                self.speaker.speak(response)
                 time.sleep(1.5)  # Let TTS finish
-                exit(0)
 
             # === Unknown Intent (fallback) ===
             else:
@@ -226,9 +245,9 @@ class CoreBrain:
                 print("🧠 [Fallback] No matching intent. Trying tool router first.")
                 if self.tool_router:
                     # tool_router handles LLM planning + tool calls + final response
-                    response = self.tool_router.plan_and_execute(data, sem_context)
+                    response = self.tool_router.plan_and_execute(data, sem_context, history=history)
                 else:
-                    response = self.gpt.generate_response(data, semantic_context=sem_context)
+                    response = self.gpt.generate_response(data, semantic_context=sem_context, history=history)
 
         except Exception as e:
             print(f"[CoreBrain Error]: {e}")
@@ -238,3 +257,4 @@ class CoreBrain:
         self.speaker.speak(response)
         self._store_turns(user_text=data, assistant_text=response, intent=chosen, emotion=emotion)
         return response, emotion
+

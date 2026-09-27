@@ -61,6 +61,37 @@ function formatHumanReadableResponse(text) {
   return text;
 }
 
+
+/**
+ * Returns tailored colors and emoji icon based on the AI's extracted emotion.
+ */
+function getEmotionBadgeStyles(emotionStr) {
+  const emotion = (emotionStr || '').toLowerCase();
+  
+  if (['happy', 'joy', 'excited', 'good', 'great', 'cheerful'].includes(emotion)) {
+    return { icon: '😊', bg: 'bg-emerald-100 dark:bg-emerald-500/20', text: 'text-emerald-800 dark:text-emerald-300', border: 'border-emerald-200 dark:border-emerald-500/30' };
+  }
+  if (['sad', 'crying', 'depressed', 'down', 'alone', 'gloomy'].includes(emotion)) {
+    return { icon: '😢', bg: 'bg-indigo-100 dark:bg-indigo-500/20', text: 'text-indigo-800 dark:text-indigo-300', border: 'border-indigo-200 dark:border-indigo-500/30' };
+  }
+  if (['angry', 'frustrated', 'mad', 'furious'].includes(emotion)) {
+    return { icon: '😠', bg: 'bg-rose-100 dark:bg-rose-500/20', text: 'text-rose-800 dark:text-rose-300', border: 'border-rose-200 dark:border-rose-500/30' };
+  }
+  if (['stressed', 'anxious', 'nervous', 'worried'].includes(emotion)) {
+    return { icon: '😰', bg: 'bg-amber-100 dark:bg-amber-500/20', text: 'text-amber-800 dark:text-amber-300', border: 'border-amber-200 dark:border-amber-500/30' };
+  }
+  if (['surprised', 'shocked', 'amazed'].includes(emotion)) {
+    return { icon: '😲', bg: 'bg-fuchsia-100 dark:bg-fuchsia-500/20', text: 'text-fuchsia-800 dark:text-fuchsia-300', border: 'border-fuchsia-200 dark:border-fuchsia-500/30' };
+  }
+  if (['love', 'affection', 'caring'].includes(emotion)) {
+    return { icon: '🥰', bg: 'bg-pink-100 dark:bg-pink-500/20', text: 'text-pink-800 dark:text-pink-300', border: 'border-pink-200 dark:border-pink-500/30' };
+  }
+  if (emotion === 'neutral') {
+    return { icon: '🙂', bg: 'bg-orange-100 dark:bg-orange-500/20', text: 'text-orange-800 dark:text-orange-300', border: 'border-orange-200 dark:border-orange-500/30' };
+  }
+  return { icon: '🎭', bg: 'bg-gray-100 dark:bg-gray-500/20', text: 'text-gray-800 dark:text-gray-300', border: 'border-gray-200 dark:border-gray-500/30' };
+}
+
 export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
@@ -507,6 +538,18 @@ export default function Chat() {
 
   const toggleRecording = () => { isRecording ? stopRecording() : startRecording(); };
 
+  // ── Global Enter listener for stopping recording ──────────────────────────
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && isRecording) {
+        e.preventDefault();
+        stopRecording();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [isRecording]);
+
   // ── Avatar initials ───────────────────────────────────────────────────────
   const initials = user?.name
     ? user.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
@@ -530,8 +573,8 @@ export default function Chat() {
               <div className={`flex flex-col gap-1.5 max-w-[82%] ${msg.role === 'user' ? 'items-end' : ''}`}>
                 <div className={`px-4 py-3 rounded-2xl text-[15px] leading-relaxed
                   ${msg.role === 'user'
-                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-br-sm shadow-lg shadow-indigo-500/10'
-                    : 'bg-surface text-textMain border border-borderMuted rounded-bl-sm shadow-sm'
+                    ? 'bg-blue-50 text-blue-900 border border-blue-100 dark:bg-indigo-500/20 dark:text-indigo-100 dark:border-indigo-500/30 rounded-2xl rounded-br-sm shadow-sm'
+                    : 'bg-surface text-textMain border border-borderMuted rounded-2xl rounded-bl-sm shadow-sm'
                   }`}
                 >
                   {/* Audio processing spinner bubble with Stop Button */}
@@ -561,10 +604,18 @@ export default function Chat() {
                     </>
                   )}
                 </div>
-                {msg.emotion && msg.emotion !== 'neutral' && msg.emotion !== 'error' && msg.role === 'jarvis' && (
-                  <span className="text-xs text-textMuted px-1 flex items-center gap-1">
-                    <Volume2 size={11} /> {msg.emotion}
-                  </span>
+                {msg.role === 'jarvis' && msg.emotion && msg.emotion !== 'error' && (
+                  (() => {
+                    const style = getEmotionBadgeStyles(msg.emotion);
+                    return (
+                      <div className="flex items-center gap-2 mt-1">
+                        <div className={`px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 border shadow-sm ${style.bg} ${style.text} ${style.border}`}>
+                          <span>{style.icon}</span>
+                          <span className="capitalize">{msg.emotion}</span>
+                        </div>
+                      </div>
+                    );
+                  })()
                 )}
               </div>
               {msg.role === 'user' && (
@@ -684,7 +735,17 @@ export default function Chat() {
                     : inputValue
                 }
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder="Ask JARVIS anything or upload audio…"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (isRecording) {
+                      stopRecording(); // stops mic → triggers onstop → sends audio automatically
+                    } else if (!isProcessingAudio) {
+                      handleTextSend(e);
+                    }
+                  }
+                }}
+                placeholder="Ask Minialm anything or upload audio…"
                 className="w-full bg-transparent border-none outline-none text-textMain placeholder-textMuted py-2 px-3 focus:ring-0 text-[15px]"
               />
 

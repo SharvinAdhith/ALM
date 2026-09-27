@@ -166,6 +166,34 @@ def transcribe_multilingual(filename: str = "cache/input.wav") -> dict:
 
 # ── Acoustic scene feature extraction (librosa-based, no GPU required) ────────
 
+def ensure_wav_file(file_path: str) -> str:
+    """
+    Ensures the audio file is in standard WAV format so librosa/soundfile/torchaudio
+    can read it cleanly on Windows without format recognition errors.
+    """
+    if not file_path or not os.path.exists(file_path):
+        return file_path
+    if file_path.lower().endswith(".wav"):
+        return file_path
+
+    wav_path = os.path.splitext(file_path)[0] + "_converted.wav"
+    try:
+        ffmpeg_bin = os.path.join(_ffmpeg_dir, "ffmpeg.exe")
+        cmd_bin = ffmpeg_bin if os.path.exists(ffmpeg_bin) else "ffmpeg"
+        import subprocess
+        subprocess.run(
+            [cmd_bin, "-y", "-i", file_path, "-ar", "16000", "-ac", "1", wav_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        if os.path.exists(wav_path):
+            return wav_path
+    except Exception as exc:
+        print(f"[ensure_wav_file] Warning: Failed to convert {file_path} to WAV: {exc}")
+    return file_path
+
+
 def extract_scene_features(filename: str) -> dict:
     """
     Extracts acoustic features from audio using librosa.
@@ -180,11 +208,12 @@ def extract_scene_features(filename: str) -> dict:
         duration_sec    : float
         sample_rate     : int
     """
+    wav_file = ensure_wav_file(filename)
     try:
         import librosa
         import numpy as np
 
-        y, sr = librosa.load(filename, sr=None, mono=True, duration=60.0)
+        y, sr = librosa.load(wav_file, sr=None, mono=True, duration=60.0)
         duration = librosa.get_duration(y=y, sr=sr)
 
         # RMS energy → noise level
@@ -239,6 +268,12 @@ def extract_scene_features(filename: str) -> dict:
             "duration_sec": 0.0,
             "sample_rate": 16000,
         }
+    finally:
+        if wav_file != filename and os.path.exists(wav_file):
+            try:
+                os.remove(wav_file)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
