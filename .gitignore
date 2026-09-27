@@ -69,3 +69,4 @@ tmp_git_status.txt
 *.json
 *ps1
 *.txt
+*.png
